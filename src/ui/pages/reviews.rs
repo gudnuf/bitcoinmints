@@ -14,7 +14,7 @@ pub fn render_reviews_page(recommendations: &[RecommendationWithUser]) -> Markup
                 (
                     {
                         let ratings: Vec<i32> = recommendations.iter()
-                            .map(|r| r.recommendation.rating)
+                            .filter_map(|r| r.recommendation.rating)
                             .collect();
                         if let Some(avg) = if ratings.is_empty() {
                             None

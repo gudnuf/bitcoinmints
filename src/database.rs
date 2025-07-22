@@ -90,13 +90,66 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        // Create index for mint_info table
+        // Add health tracking columns if they don't exist (for existing databases)
+        let add_health_columns = [
+            "ALTER TABLE mint_info ADD COLUMN consecutive_failures INTEGER DEFAULT 0",
+            "ALTER TABLE mint_info ADD COLUMN consecutive_successes INTEGER DEFAULT 0",
+            "ALTER TABLE mint_info ADD COLUMN total_attempts INTEGER DEFAULT 0",
+            "ALTER TABLE mint_info ADD COLUMN total_successes INTEGER DEFAULT 0",
+            "ALTER TABLE mint_info ADD COLUMN first_seen_at TEXT",
+            "ALTER TABLE mint_info ADD COLUMN health_score REAL DEFAULT 1.0",
+            "ALTER TABLE mint_info ADD COLUMN is_currently_online BOOLEAN DEFAULT TRUE",
+        ];
+
+        for alter_sql in add_health_columns {
+            // Ignore errors if column already exists
+            let _ = sqlx::query(alter_sql).execute(&self.pool).await;
+        }
+
+        // Create health_records table for detailed health history
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS health_records (
+                id TEXT PRIMARY KEY,
+                mint_url TEXT NOT NULL,
+                checked_at TEXT NOT NULL,
+                success BOOLEAN NOT NULL,
+                response_time_ms INTEGER,
+                error_message TEXT,
+                http_status INTEGER,
+                FOREIGN KEY (mint_url) REFERENCES mint_info (mint_url)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create indexes for mint_info table
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_mint_info_url ON mint_info (mint_url)")
             .execute(&self.pool)
             .await?;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_mint_info_fetched ON mint_info (last_fetched_at)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_mint_info_health ON mint_info (health_score, is_currently_online)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create indexes for health_records table
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_health_records_url ON health_records (mint_url)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_health_records_checked ON health_records (checked_at)",
         )
         .execute(&self.pool)
         .await?;
@@ -171,19 +224,41 @@ impl Database {
         Ok(events)
     }
 
-    /// Get processed mint data with recommendations
-    pub async fn get_mints_with_recommendations(&self) -> Result<Vec<MintWithRecommendations>> {
-        // Get all mint events (38172 and 38173)
-        let mint_rows = sqlx::query(
-            r#"
-            SELECT id, event_id, kind, pubkey, content, tags, sig, created_at, received_at
-            FROM raw_events 
-            WHERE kind IN (38172, 38173)
-            ORDER BY created_at DESC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+    /// Get all mints with their recommendations (filtered by mint type if specified)
+    pub async fn get_mints_with_recommendations(
+        &self,
+        mint_type: Option<&str>,
+    ) -> Result<Vec<MintWithRecommendations>> {
+        // Build SQL query based on mint type filter
+        let sql_query = match mint_type {
+            Some("cashu") => {
+                r#"
+                SELECT id, event_id, kind, pubkey, content, tags, sig, created_at, received_at
+                FROM raw_events 
+                WHERE kind = 38172
+                ORDER BY created_at DESC
+                "#
+            }
+            Some("fedimint") => {
+                r#"
+                SELECT id, event_id, kind, pubkey, content, tags, sig, created_at, received_at
+                FROM raw_events 
+                WHERE kind = 38173
+                ORDER BY created_at DESC
+                "#
+            }
+            _ => {
+                r#"
+                SELECT id, event_id, kind, pubkey, content, tags, sig, created_at, received_at
+                FROM raw_events 
+                WHERE kind IN (38172, 38173)
+                ORDER BY created_at DESC
+                "#
+            }
+        };
+
+        // Get filtered mint events
+        let mint_rows = sqlx::query(sql_query).fetch_all(&self.pool).await?;
 
         // Use a HashMap to deduplicate by normalized URL, keeping the most recent mint
         let mut unique_mints: std::collections::HashMap<String, Mint> =
@@ -211,12 +286,13 @@ impl Database {
 
             // Calculate stats
             let total_recommendations = recommendations.len();
-            let average_rating = if total_recommendations > 0 {
-                let sum: i32 = recommendations
-                    .iter()
-                    .map(|r| r.recommendation.rating)
-                    .sum();
-                Some(sum as f64 / total_recommendations as f64)
+            let ratings_with_values: Vec<i32> = recommendations
+                .iter()
+                .filter_map(|r| r.recommendation.rating)
+                .collect();
+            let average_rating = if !ratings_with_values.is_empty() {
+                let sum: i32 = ratings_with_values.iter().sum();
+                Some(sum as f64 / ratings_with_values.len() as f64)
             } else {
                 None
             };
@@ -238,12 +314,89 @@ impl Database {
     /// Get all mints with their recommendations and stored mint info for frontend display
     pub async fn get_mints_with_recommendations_and_info(
         &self,
+        query_params: &crate::models::MintQueryParams,
     ) -> Result<Vec<MintWithRecommendationsAndInfo>> {
-        let mints_with_recs = self.get_mints_with_recommendations().await?;
+        let mints_with_recs = self
+            .get_mints_with_recommendations(query_params.mint_type.as_deref())
+            .await?;
 
         let mut mints_with_info = Vec::new();
 
         for mint_with_recs in mints_with_recs {
+            // Apply Cashu currency filters if specified
+            if query_params.mint_type.as_deref() == Some("cashu")
+                && (query_params.minting.is_some() || query_params.melting.is_some())
+            {
+                let mut passes_filter = true;
+
+                // Check minting currencies filter
+                if let Some(minting_currencies_str) = &query_params.minting {
+                    let required_minting_currencies: Vec<&str> = minting_currencies_str
+                        .split(',')
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+
+                    if !required_minting_currencies.is_empty() {
+                        let supported_minting_currencies: Vec<String> = mint_with_recs
+                            .mint
+                            .nuts
+                            .nut04
+                            .methods
+                            .iter()
+                            .map(|method| format!("{:?}", method.unit).to_lowercase())
+                            .collect();
+
+                        // Check if all required minting currencies are supported
+                        for required_currency in required_minting_currencies {
+                            if !supported_minting_currencies
+                                .contains(&required_currency.to_lowercase())
+                            {
+                                passes_filter = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Check melting currencies filter
+                if passes_filter {
+                    if let Some(melting_currencies_str) = &query_params.melting {
+                        let required_melting_currencies: Vec<&str> = melting_currencies_str
+                            .split(',')
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+
+                        if !required_melting_currencies.is_empty() {
+                            let supported_melting_currencies: Vec<String> = mint_with_recs
+                                .mint
+                                .nuts
+                                .nut05
+                                .methods
+                                .iter()
+                                .map(|method| format!("{:?}", method.unit).to_lowercase())
+                                .collect();
+
+                            // Check if all required melting currencies are supported
+                            for required_currency in required_melting_currencies {
+                                if !supported_melting_currencies
+                                    .contains(&required_currency.to_lowercase())
+                                {
+                                    passes_filter = false;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Skip this mint if it doesn't pass the currency filters
+                if !passes_filter {
+                    continue;
+                }
+            }
+
             // Get stored mint info for this mint
             let stored_info = self
                 .get_stored_mint_info(&mint_with_recs.mint.mint_url)
@@ -604,7 +757,7 @@ impl Database {
         let mut d_tag = String::new();
         let mut k_tag = String::new();
         let mut invite_codes = Vec::new();
-        let mut rating = 5; // Default positive rating
+        let mut rating: Option<i32> = None;
 
         // Parse tags
         for tag in tags {
@@ -616,15 +769,15 @@ impl Database {
                     "u" => invite_codes.push(tag_vec[1].clone()),
                     "rating" => {
                         if let Ok(r) = tag_vec[1].parse::<i32>() {
-                            rating = r;
+                            rating = Some(r);
                         }
                     }
                     _ => {}
                 }
             }
         }
-        // Parse rating from content if not in tags
-        if rating == 5 && !content.is_empty() {
+        // Parse rating from content if not found in tags
+        if rating.is_none() && !content.is_empty() {
             // Look for rating pattern like [5/5] or [3/5] in the content
             if let Some(captures) = regex::Regex::new(r"\[(\d+)/5\]")
                 .unwrap()
@@ -632,7 +785,7 @@ impl Database {
             {
                 if let Some(rating_match) = captures.get(1) {
                     if let Ok(parsed_rating) = rating_match.as_str().parse::<i32>() {
-                        rating = parsed_rating;
+                        rating = Some(parsed_rating);
                     }
                 }
             }
@@ -844,32 +997,98 @@ impl Database {
         }))
     }
 
-    /// Store mint info from /v1/info endpoint
+    /// Store mint info from /v1/info endpoint with health tracking
     pub async fn store_mint_info(
         &self,
         mint_url: &str,
         mint_info_json: Option<&str>,
         error: Option<&str>,
     ) -> Result<()> {
-        let id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let info_json = mint_info_json.unwrap_or("{}");
+        let success = mint_info_json.is_some();
+
+        // Get existing record to update health counters
+        let existing = self.get_stored_mint_info(mint_url).await?;
+
+        let (
+            consecutive_failures,
+            consecutive_successes,
+            total_attempts,
+            total_successes,
+            first_seen_at,
+            health_score,
+        ) = if let Some(existing_info) = existing {
+            let new_total_attempts = existing_info.total_attempts + 1;
+            let new_total_successes = if success {
+                existing_info.total_successes + 1
+            } else {
+                existing_info.total_successes
+            };
+
+            let (new_consecutive_failures, new_consecutive_successes) = if success {
+                (0, existing_info.consecutive_successes + 1)
+            } else {
+                (existing_info.consecutive_failures + 1, 0)
+            };
+
+            // Calculate health score based on recent success rate
+            let new_health_score = if new_total_attempts > 0 {
+                new_total_successes as f64 / new_total_attempts as f64
+            } else {
+                1.0
+            };
+
+            (
+                new_consecutive_failures,
+                new_consecutive_successes,
+                new_total_attempts,
+                new_total_successes,
+                existing_info.first_seen_at,
+                new_health_score,
+            )
+        } else {
+            // First time seeing this mint
+            let initial_successes = if success { 1 } else { 0 };
+            let initial_failures = if success { 0 } else { 1 };
+            let initial_health_score = if success { 1.0 } else { 0.0 };
+
+            (
+                initial_failures,
+                initial_successes,
+                1,
+                initial_successes,
+                now,
+                initial_health_score,
+            )
+        };
+
+        let id = Uuid::new_v4().to_string();
 
         sqlx::query(
             r#"
             INSERT OR REPLACE INTO mint_info 
-            (id, mint_url, info_json, last_fetched_at, fetch_success, error_message, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, mint_url, info_json, last_fetched_at, fetch_success, error_message, created_at, updated_at,
+             consecutive_failures, consecutive_successes, total_attempts, total_successes, 
+             first_seen_at, health_score, is_currently_online)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
         .bind(mint_url)
         .bind(info_json)
         .bind(now.to_rfc3339())
-        .bind(mint_info_json.is_some())
+        .bind(success)
         .bind(error)
         .bind(now.to_rfc3339())
         .bind(now.to_rfc3339())
+        .bind(consecutive_failures)
+        .bind(consecutive_successes)
+        .bind(total_attempts)
+        .bind(total_successes)
+        .bind(first_seen_at.to_rfc3339())
+        .bind(health_score)
+        .bind(success)
         .execute(&self.pool)
         .await?;
 
@@ -938,7 +1157,9 @@ impl Database {
     ) -> Result<Option<crate::models::StoredMintInfo>> {
         let row = sqlx::query(
             r#"
-            SELECT id, mint_url, info_json, last_fetched_at, fetch_success, error_message, created_at, updated_at
+            SELECT id, mint_url, info_json, last_fetched_at, fetch_success, error_message, created_at, updated_at,
+                   consecutive_failures, consecutive_successes, total_attempts, total_successes, 
+                   first_seen_at, health_score, is_currently_online
             FROM mint_info
             WHERE mint_url = ?
             "#,
@@ -966,6 +1187,23 @@ impl Database {
                     &row.get::<String, _>("updated_at"),
                 )?
                 .into(),
+                consecutive_failures: row
+                    .get::<Option<i32>, _>("consecutive_failures")
+                    .unwrap_or(0),
+                consecutive_successes: row
+                    .get::<Option<i32>, _>("consecutive_successes")
+                    .unwrap_or(0),
+                total_attempts: row.get::<Option<i32>, _>("total_attempts").unwrap_or(0),
+                total_successes: row.get::<Option<i32>, _>("total_successes").unwrap_or(0),
+                first_seen_at: chrono::DateTime::parse_from_rfc3339(
+                    &row.get::<Option<String>, _>("first_seen_at")
+                        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+                )?
+                .into(),
+                health_score: row.get::<Option<f64>, _>("health_score").unwrap_or(1.0),
+                is_currently_online: row
+                    .get::<Option<bool>, _>("is_currently_online")
+                    .unwrap_or(true),
             }))
         } else {
             Ok(None)
@@ -976,7 +1214,9 @@ impl Database {
     pub async fn get_all_stored_mint_info(&self) -> Result<Vec<crate::models::StoredMintInfo>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, mint_url, info_json, last_fetched_at, fetch_success, error_message, created_at, updated_at
+            SELECT id, mint_url, info_json, last_fetched_at, fetch_success, error_message, created_at, updated_at,
+                   consecutive_failures, consecutive_successes, total_attempts, total_successes, 
+                   first_seen_at, health_score, is_currently_online
             FROM mint_info
             ORDER BY last_fetched_at DESC
             "#,
@@ -1004,6 +1244,23 @@ impl Database {
                     &row.get::<String, _>("updated_at"),
                 )?
                 .into(),
+                consecutive_failures: row
+                    .get::<Option<i32>, _>("consecutive_failures")
+                    .unwrap_or(0),
+                consecutive_successes: row
+                    .get::<Option<i32>, _>("consecutive_successes")
+                    .unwrap_or(0),
+                total_attempts: row.get::<Option<i32>, _>("total_attempts").unwrap_or(0),
+                total_successes: row.get::<Option<i32>, _>("total_successes").unwrap_or(0),
+                first_seen_at: chrono::DateTime::parse_from_rfc3339(
+                    &row.get::<Option<String>, _>("first_seen_at")
+                        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+                )?
+                .into(),
+                health_score: row.get::<Option<f64>, _>("health_score").unwrap_or(1.0),
+                is_currently_online: row
+                    .get::<Option<bool>, _>("is_currently_online")
+                    .unwrap_or(true),
             });
         }
 
@@ -1024,5 +1281,174 @@ impl Database {
         }
 
         anyhow::bail!("No mint URL found in tags");
+    }
+
+    /// Get mint health summary for API responses
+    pub async fn get_mint_health_summary(
+        &self,
+        mint_url: &str,
+    ) -> Result<Option<crate::models::MintHealthSummary>> {
+        let stored_info = self.get_stored_mint_info(mint_url).await?;
+
+        if let Some(info) = stored_info {
+            // Get 24h statistics from health_records if available
+            let cutoff_24h = Utc::now() - chrono::Duration::hours(24);
+
+            let health_stats = sqlx::query(
+                r#"
+                SELECT 
+                    COUNT(*) as total_checks,
+                    SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_checks,
+                    AVG(response_time_ms) as avg_response_time
+                FROM health_records 
+                WHERE mint_url = ? AND checked_at > ?
+                "#,
+            )
+            .bind(mint_url)
+            .bind(cutoff_24h.to_rfc3339())
+            .fetch_one(&self.pool)
+            .await
+            .ok();
+
+            let (total_checks_24h, successful_checks_24h, avg_response_time_24h) =
+                if let Some(stats) = health_stats {
+                    (
+                        stats.get::<i64, _>("total_checks") as i32,
+                        stats.get::<i64, _>("successful_checks") as i32,
+                        stats.get::<Option<f64>, _>("avg_response_time"),
+                    )
+                } else {
+                    (0, 0, None)
+                };
+
+            // Get last online/offline times
+            let last_online = if info.is_currently_online {
+                Some(info.last_fetched_at)
+            } else {
+                sqlx::query(
+                    r#"
+                    SELECT checked_at FROM health_records 
+                    WHERE mint_url = ? AND success = 1 
+                    ORDER BY checked_at DESC LIMIT 1
+                    "#,
+                )
+                .bind(mint_url)
+                .fetch_optional(&self.pool)
+                .await?
+                .and_then(|row| {
+                    chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("checked_at"))
+                        .ok()
+                        .map(|dt| dt.into())
+                })
+            };
+
+            let last_offline = if !info.is_currently_online {
+                Some(info.last_fetched_at)
+            } else {
+                sqlx::query(
+                    r#"
+                    SELECT checked_at FROM health_records 
+                    WHERE mint_url = ? AND success = 0 
+                    ORDER BY checked_at DESC LIMIT 1
+                    "#,
+                )
+                .bind(mint_url)
+                .fetch_optional(&self.pool)
+                .await?
+                .and_then(|row| {
+                    chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("checked_at"))
+                        .ok()
+                        .map(|dt| dt.into())
+                })
+            };
+
+            Ok(Some(crate::models::MintHealthSummary {
+                mint_url: info.mint_url,
+                is_online: info.is_currently_online,
+                uptime_percentage: info.health_score * 100.0,
+                last_online,
+                last_offline,
+                consecutive_failures: info.consecutive_failures,
+                total_checks_24h,
+                successful_checks_24h,
+                average_response_time_24h: avg_response_time_24h,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Store a detailed health record
+    pub async fn store_health_record(
+        &self,
+        mint_url: &str,
+        success: bool,
+        response_time_ms: Option<i64>,
+        error_message: Option<&str>,
+        http_status: Option<u16>,
+    ) -> Result<()> {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now();
+
+        sqlx::query(
+            r#"
+            INSERT INTO health_records 
+            (id, mint_url, checked_at, success, response_time_ms, error_message, http_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&id)
+        .bind(mint_url)
+        .bind(now.to_rfc3339())
+        .bind(success)
+        .bind(response_time_ms)
+        .bind(error_message)
+        .bind(http_status.map(|s| s as i32))
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get all mint health summaries for dashboard
+    pub async fn get_all_mint_health_summaries(
+        &self,
+    ) -> Result<Vec<crate::models::MintHealthSummary>> {
+        let all_infos = self.get_all_stored_mint_info().await?;
+        let mut summaries = Vec::new();
+
+        for info in all_infos {
+            if let Ok(Some(summary)) = self.get_mint_health_summary(&info.mint_url).await {
+                summaries.push(summary);
+            }
+        }
+
+        Ok(summaries)
+    }
+
+    /// Cleanup old health records to prevent database bloat (keep last 30 days)
+    pub async fn cleanup_old_health_records(&self) -> Result<()> {
+        let cutoff = Utc::now() - chrono::Duration::days(30);
+
+        let deleted_count = sqlx::query(
+            r#"
+            DELETE FROM health_records 
+            WHERE checked_at < ?
+            "#,
+        )
+        .bind(cutoff.to_rfc3339())
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+
+        if deleted_count > 0 {
+            info!(
+                target: "bitcoinmints_retyr::database",
+                deleted_records = deleted_count,
+                "🧹 Cleaned up old health records"
+            );
+        }
+
+        Ok(())
     }
 }

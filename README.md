@@ -1,14 +1,40 @@
 # bitcoinmints-retyr
 
-NIP-87 Nostr event collector for ecash mint discoverability.
+NIP-87 Nostr event collector for ecash mint discoverability with comprehensive health tracking and monitoring.
 
 ## Features
 
 - Listens for NIP-87 events (38172 cashu mints, 38173 fedimints, 38000 recommendations)
-- Fetches detailed mint information from `/v1/info` endpoints
-- Provides REST API and web frontend for browsing mints and recommendations
+- **🏥 Health Tracking & Monitoring**: Real-time mint health monitoring with uptime tracking, retry logic, and status indicators
+- **🔄 Intelligent Retry System**: Exponential backoff retry mechanism for reliable mint info fetching
+- Fetches detailed mint information from `/v1/info` endpoints with health metrics
+- Provides REST API and web frontend for browsing mints, recommendations, and health status
+- **📊 Uptime Statistics**: Tracks mint uptime percentages, response times, and availability history
 - Normalizes mint URLs and handles duplicates
 - Stores user profiles and recommendation data
+
+## Health Tracking System
+
+### Overview
+The application includes a comprehensive health tracking system that monitors mint availability and performance:
+
+- **Real-time Status Monitoring**: Tracks online/offline status for all mints
+- **Uptime Calculation**: Calculates uptime percentages based on successful/failed requests
+- **Response Time Tracking**: Monitors average response times for performance analysis
+- **Intelligent Retry Logic**: Uses exponential backoff (1s → 2s → 4s delays) with up to 3 retry attempts
+- **Health Score**: Assigns health scores (0.0-1.0) based on historical performance
+- **Visual Health Indicators**: Frontend displays color-coded health status (🟢 Online, 🔴 Offline, 🟡 Degraded)
+
+### Health Data Storage
+- **mint_info table**: Stores health metrics including consecutive failures/successes, health scores, and current status
+- **health_records table**: Detailed history of individual health checks with timestamps and response times
+- **Automatic Cleanup**: Removes health records older than 30 days to prevent database bloat
+
+### Frontend Health Display
+- **Status Indicators**: Visual online/offline indicators with color coding
+- **Uptime Bars**: Graphical uptime percentage displays with quality ratings (Excellent ≥95%, Good ≥80%, Poor <80%)
+- **Last Seen**: Shows when offline mints were last successfully contacted
+- **Response Times**: Displays average response times for performance monitoring
 
 ## Logging Configuration
 
@@ -65,7 +91,95 @@ Health check endpoint. Returns status information about the service.
 }
 ```
 
+### `GET /api/health/status`
+Get comprehensive health status summary for all monitored mints:
+```json
+{
+  "summary": {
+    "total_mints": 30,
+    "online_mints": 25,
+    "offline_mints": 5,
+    "average_uptime_percent": 83.3
+  },
+  "mints": [
+    {
+      "mint_url": "https://mint.voltz.io",
+      "status": "online",
+      "health_score": 1.0,
+      "uptime_percent": 100.0,
+      "last_check_at": "2025-01-21T15:30:45.000Z",
+      "last_online_at": "2025-01-21T15:30:45.000Z",
+      "last_offline_at": null,
+      "consecutive_successes": 145,
+      "consecutive_failures": 0,
+      "avg_response_time_ms": 359,
+      "checks_24h": 24,
+      "successes_24h": 24
+    },
+    {
+      "mint_url": "https://mint.nostrich.cc",
+      "status": "offline",
+      "health_score": 0.0,
+      "uptime_percent": 0.0,
+      "last_check_at": "2025-01-21T15:25:33.000Z",
+      "last_online_at": "2025-01-20T08:15:22.000Z",
+      "last_offline_at": "2025-01-21T15:25:33.000Z",
+      "consecutive_successes": 0,
+      "consecutive_failures": 47,
+      "avg_response_time_ms": null,
+      "checks_24h": 24,
+      "successes_24h": 0
+    }
+  ]
+}
+```
 
+### `GET /api/health/mint/{mint_url}`
+Get detailed health information for a specific mint (URL must be URL-encoded):
+```json
+{
+  "mint_url": "https://mint.voltz.io",
+  "status": "online",
+  "health_score": 1.0,
+  "uptime_percent": 100.0,
+  "last_check_at": "2025-01-21T15:30:45.000Z",
+  "last_online_at": "2025-01-21T15:30:45.000Z",
+  "last_offline_at": null,
+  "total_attempts": 1250,
+  "total_successes": 1250,
+  "consecutive_successes": 145,
+  "consecutive_failures": 0,
+  "first_seen_at": "2025-01-15T10:20:30.000Z",
+  "created_at": "2025-01-15T10:20:30.000Z",
+  "updated_at": "2025-01-21T15:30:45.000Z",
+  "avg_response_time_ms": 359,
+  "checks_24h": 24,
+  "successes_24h": 24,
+  "recent_health_records": [
+    {
+      "timestamp": "2025-01-21T15:30:45.000Z",
+      "success": true,
+      "response_time_ms": 342,
+      "error_message": null
+    },
+    {
+      "timestamp": "2025-01-21T15:15:30.000Z", 
+      "success": true,
+      "response_time_ms": 376,
+      "error_message": null
+    }
+  ]
+}
+```
+
+**Example Usage:**
+```bash
+# Get overall health status
+curl http://localhost:3000/api/health/status
+
+# Get health for specific mint (URL-encoded)
+curl "http://localhost:3000/api/health/mint/$(echo 'https://mint.voltz.io' | jq -Rr @uri)"
+```
 
 ### `GET /api/mints`
 
@@ -417,6 +531,26 @@ Get detailed mint information from /v1/info endpoints:
 3. **Detect recommendations** and fetch user profiles only for their authors (efficient)
 4. **Parse** events on-demand when API is called  
 5. **Return** structured JSON responses with linked user data
+
+## Health Monitoring Configuration
+
+### Retry Logic
+- **Maximum Retries**: 3 attempts per mint per fetch cycle
+- **Backoff Strategy**: Exponential backoff (1s → 2s → 4s delays)
+- **Permanent Error Detection**: Skips retries for 404 errors and other permanent failures
+- **Timeout**: 30-second timeout per request attempt
+
+### Fetch Intervals
+- **Info Fetching**: Every 6 hours for mint info updates
+- **Health Cleanup**: Every 24 hours to remove old health records
+- **Status Updates**: Real-time updates during fetch cycles
+
+### Health Score Calculation
+Health scores are calculated as: `total_successes / total_attempts`
+- **1.0**: Perfect uptime (100% success rate)
+- **0.8-0.99**: Good health (80-99% success rate)  
+- **0.5-0.79**: Degraded health (50-79% success rate)
+- **0.0-0.49**: Poor health (below 50% success rate)
 
 ## Configuration
 

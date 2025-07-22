@@ -243,7 +243,11 @@ pub fn render_review_card(rec_with_user: &RecommendationWithUser) -> Markup {
                     }
                 }
                 div class="review-rating" {
-                    "⭐ " (rec_with_user.recommendation.rating)
+                    @if let Some(rating) = rec_with_user.recommendation.rating {
+                        "⭐ " (rating)
+                    } @else {
+                        span style="color: rgba(255, 255, 255, 0.5); font-style: italic;" { "No rating" }
+                    }
                 }
             }
 

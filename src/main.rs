@@ -14,8 +14,8 @@ mod utils;
 
 use database::Database;
 use handlers::{
-    cleanup_mints, get_mint_info, get_mints, get_raw_events, get_users, health_check, mint_stats,
-    mints_page, reviews_page,
+    cleanup_mints, get_health_status, get_mint_health, get_mint_info, get_mints, get_raw_events,
+    get_users, health_check, mint_stats, mints_page, reviews_page,
 };
 use mint_info_service::MintInfoService;
 use nostr::NostrService;
@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
     // Start historical sync in background (after a delay to let real-time subscription start)
     let nostr_clone = nostr_service.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         if let Err(e) = nostr_clone.sync_historical_events().await {
             tracing::error!(
                 target: "bitcoinmints_retyr::nostr",
@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
     // Start mint info fetching in background (after a delay to let other services start)
     let mint_info_clone = mint_info_service.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         if let Err(e) = mint_info_clone.start().await {
             tracing::error!(
                 target: "bitcoinmints_retyr::mint_info",
@@ -102,6 +102,8 @@ async fn main() -> Result<()> {
         .route("/api/cleanup", axum::routing::post(cleanup_mints))
         .route("/api/stats", get(mint_stats))
         .route("/api/mint-info", get(get_mint_info))
+        .route("/api/health/status", get(get_health_status))
+        .route("/api/health/mint/:mint_url", get(get_mint_health))
         .with_state(database)
         .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()));
 
@@ -131,6 +133,14 @@ async fn main() -> Result<()> {
         (
             "GET /api/mint-info",
             "Get detailed mint info from /v1/info endpoints",
+        ),
+        (
+            "GET /api/health/status",
+            "Get health status summary for all mints",
+        ),
+        (
+            "GET /api/health/mint/{mint_url}",
+            "Get detailed health information for a specific mint",
         ),
     ];
 
@@ -219,7 +229,9 @@ async fn root_handler() -> axum::Json<serde_json::Value> {
             "/api/events/raw": "Get all raw events (debugging)",
             "/api/cleanup": "POST - Clean up duplicate mints by normalizing URLs",
             "/api/stats": "Get mint statistics and duplicate counts",
-            "/api/mint-info": "Get detailed mint information from /v1/info endpoints"
+            "/api/mint-info": "Get detailed mint information from /v1/info endpoints",
+            "/api/health/status": "Get health status summary for all mints",
+            "/api/health/mint/{mint_url}": "Get detailed health information for a specific mint"
         },
         "nip87_events": {
             "cashu_mint": 38172,

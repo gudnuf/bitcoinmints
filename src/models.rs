@@ -41,7 +41,7 @@ pub struct Recommendation {
     pub event_id: String,
     pub reviewer_pubkey: String,
     pub mint_pubkey: String,
-    pub rating: i32,
+    pub rating: Option<i32>,
     pub content: Option<String>,
     pub d_tag: String,
     pub k_tag: String,
@@ -142,4 +142,50 @@ pub struct StoredMintInfo {
     pub error_message: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    // Health tracking fields
+    pub consecutive_failures: i32,
+    pub consecutive_successes: i32,
+    pub total_attempts: i32,
+    pub total_successes: i32,
+    pub first_seen_at: DateTime<Utc>,
+    pub health_score: f64, // 0.0 to 1.0 representing uptime percentage
+    pub is_currently_online: bool,
+}
+
+/// Individual health check record for detailed history tracking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MintHealthRecord {
+    pub id: String,
+    pub mint_url: String,
+    pub checked_at: DateTime<Utc>,
+    pub success: bool,
+    pub response_time_ms: Option<i64>,
+    pub error_message: Option<String>,
+    pub http_status: Option<u16>,
+}
+
+/// Health summary for API responses
+#[derive(Debug, Serialize)]
+pub struct MintHealthSummary {
+    pub mint_url: String,
+    pub is_online: bool,
+    pub uptime_percentage: f64,
+    pub last_online: Option<DateTime<Utc>>,
+    pub last_offline: Option<DateTime<Utc>>,
+    pub consecutive_failures: i32,
+    pub total_checks_24h: i32,
+    pub successful_checks_24h: i32,
+    pub average_response_time_24h: Option<f64>,
+}
+
+/// Query parameters for filtering mints
+#[derive(Debug, Deserialize)]
+pub struct MintQueryParams {
+    /// Optional mint type filter: "cashu", "fedimint", or None for all
+    #[serde(rename = "type")]
+    pub mint_type: Option<String>,
+    /// Comma-separated list of currencies that must support minting (only for Cashu mints)
+    pub minting: Option<String>,
+    /// Comma-separated list of currencies that must support melting (only for Cashu mints)
+    pub melting: Option<String>,
 }

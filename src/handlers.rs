@@ -1,14 +1,20 @@
 use crate::database::Database;
+use crate::models::MintQueryParams;
 use crate::models::*;
 use crate::ui::{render_mints_page, render_reviews_page};
-use axum::{extract::State, http::StatusCode, response::Html, Json};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    response::Html,
+    Json,
+};
 use tracing::error;
 
 /// GET /api/mints - Get all mints with their recommendations
 pub async fn get_mints(
     State(database): State<Database>,
 ) -> Result<Json<MintsResponse>, (StatusCode, String)> {
-    match database.get_mints_with_recommendations().await {
+    match database.get_mints_with_recommendations(None).await {
         Ok(mints) => Ok(Json(MintsResponse { mints })),
         Err(e) => {
             error!(
@@ -119,10 +125,14 @@ pub async fn mint_stats(
 /// GET /mints - Frontend mint list page
 pub async fn mints_page(
     State(database): State<Database>,
+    Query(params): Query<MintQueryParams>,
 ) -> Result<Html<String>, (StatusCode, String)> {
-    match database.get_mints_with_recommendations_and_info().await {
+    match database
+        .get_mints_with_recommendations_and_info(&params)
+        .await
+    {
         Ok(mints) => {
-            let markup = render_mints_page(&mints);
+            let markup = render_mints_page(&mints, params.mint_type.as_deref());
             Ok(Html(markup.into_string()))
         }
         Err(e) => {
@@ -217,4 +227,82 @@ pub async fn get_mint_info(
         "mint_info": mint_info_list,
         "total_count": mint_info_list.len()
     })))
+}
+
+/// GET /api/health/status - Get health status summary for all mints
+pub async fn get_health_status(
+    State(database): State<Database>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    match database.get_all_mint_health_summaries().await {
+        Ok(health_summaries) => {
+            let online_count = health_summaries.iter().filter(|h| h.is_online).count();
+            let total_count = health_summaries.len();
+            let average_uptime = if total_count > 0 {
+                health_summaries
+                    .iter()
+                    .map(|h| h.uptime_percentage)
+                    .sum::<f64>()
+                    / total_count as f64
+            } else {
+                0.0
+            };
+
+            Ok(Json(serde_json::json!({
+                "summary": {
+                    "total_mints": total_count,
+                    "online_mints": online_count,
+                    "offline_mints": total_count - online_count,
+                    "average_uptime": format!("{:.1}%", average_uptime)
+                },
+                "mints": health_summaries
+            })))
+        }
+        Err(e) => {
+            error!(
+                target: "bitcoinmints_retyr::handlers",
+                error = %e,
+                "❌ Failed to get health summaries"
+            );
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get health summaries: {}", e),
+            ))
+        }
+    }
+}
+
+/// GET /api/health/mint/{mint_url} - Get detailed health information for a specific mint
+pub async fn get_mint_health(
+    State(database): State<Database>,
+    axum::extract::Path(mint_url): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    // URL decode the mint_url parameter
+    let decoded_url = match urlencoding::decode(&mint_url) {
+        Ok(url) => url.to_string(),
+        Err(_) => {
+            return Err((StatusCode::BAD_REQUEST, "Invalid URL encoding".to_string()));
+        }
+    };
+
+    match database.get_mint_health_summary(&decoded_url).await {
+        Ok(Some(health_summary)) => Ok(Json(
+            serde_json::to_value(health_summary).unwrap_or_default(),
+        )),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            format!("Mint not found: {}", decoded_url),
+        )),
+        Err(e) => {
+            error!(
+                target: "bitcoinmints_retyr::handlers",
+                error = %e,
+                mint_url = %decoded_url,
+                "❌ Failed to get mint health"
+            );
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get mint health: {}", e),
+            ))
+        }
+    }
 }
