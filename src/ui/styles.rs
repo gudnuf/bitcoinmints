@@ -71,14 +71,22 @@ pub fn get_shared_styles() -> &'static str {
     }
 
     .logo {
-        font-size: 3rem;
-        font-weight: 700;
-        background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
+        display: flex;
+        justify-content: center;
+        align-items: center;
         margin-bottom: 0.5rem;
-        text-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);
+    }
+
+    .logo-image {
+        height: 4rem;
+        width: auto;
+        filter: drop-shadow(0 4px 12px rgba(255, 107, 53, 0.3));
+        transition: all 0.3s ease;
+    }
+
+    .logo-image:hover {
+        filter: drop-shadow(0 6px 20px rgba(255, 107, 53, 0.5));
+        transform: scale(1.05);
     }
 
     .tagline {
@@ -218,8 +226,8 @@ pub fn get_shared_styles() -> &'static str {
             grid-template-columns: repeat(2, 1fr);
         }
 
-        .logo {
-            font-size: 2rem;
+        .logo-image {
+            height: 2.5rem;
         }
 
         .tagline {

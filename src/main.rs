@@ -1,7 +1,7 @@
 use anyhow::Result;
 use axum::{routing::get, Router};
 use tower::ServiceBuilder;
-use tower_http::trace::TraceLayer;
+use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod cache;
@@ -151,6 +151,8 @@ async fn main() -> Result<()> {
 
     // Build the router with cached database
     let app = Router::new()
+        // Static assets
+        .nest_service("/assets", ServeDir::new("src/assets"))
         // Frontend routes
         .route("/", get(mints_page))
         .route("/mints", get(mints_page))

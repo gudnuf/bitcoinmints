@@ -2,11 +2,13 @@ use crate::ui::styles::get_shared_styles;
 use maud::{html, Markup, DOCTYPE};
 
 /// Render the page header with logo and tagline
-pub fn render_header(title: &str, tagline: &str) -> Markup {
+pub fn render_header(tagline: &str) -> Markup {
     html! {
         div class="header" {
             div class="header-glass" {
-                div class="logo" { (title) }
+                div class="logo" {
+                    img src="/assets/d.png" alt="Bitcoin Mints" class="logo-image";
+                }
                 div class="tagline" { (tagline) }
             }
         }
@@ -39,7 +41,7 @@ pub fn render_layout(title: &str, tagline: &str, active_page: &str, content: Mar
             }
             body {
                 div class="dashboard-container" {
-                    (render_header(&format!("⚡ {}", title), tagline))
+                    (render_header(tagline))
                     (render_navigation(active_page))
                     (content)
                 }
