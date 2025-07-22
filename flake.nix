@@ -118,14 +118,25 @@
             # Network tools
             curl
 
+            # Build dependencies for cdk-signatory and protobuf
+            pkg-config
+            openssl
+            openssl.dev
+            cmake
+            gcc
+            gnumake
+            perl
+            python3
+            protobuf
+            zlib
+            libz
+
             # Our custom scripts
             auto-formatter
             format-all
             dev-with-formatting
 
             # Additional useful tools
-            pkg-config
-            openssl
             libiconv
           ] ++ lib.optionals stdenv.isDarwin [
             # macOS specific dependencies
@@ -141,6 +152,7 @@
             echo "🦀 Rust toolchain: $(rustc --version)"
             echo "📦 Cargo: $(cargo --version)"
             echo "❄️  Nix formatter: $(nixpkgs-fmt --version)"
+            echo "🔧 Protobuf compiler: $(protoc --version)"
             echo ""
             echo "Available commands:"
             echo "  dev-with-formatting - Start dev environment with auto-formatting (Rust + Nix)"
@@ -154,6 +166,9 @@
           # Environment variables
           RUST_BACKTRACE = "1";
           RUST_LOG = "debug";
+          # Ensure protoc is found by build scripts
+          PROTOC = "${pkgs.protobuf}/bin/protoc";
+          PROTOC_INCLUDE = "${pkgs.protobuf}/include";
         };
 
         # Additional outputs for convenience
