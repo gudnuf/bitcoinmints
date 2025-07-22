@@ -78,7 +78,7 @@ pub struct UsersResponse {
 }
 
 /// Mint with its recommendations and stored mint info for frontend display
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct MintWithRecommendationsAndInfo {
     pub mint: Mint,
     pub recommendations: Vec<RecommendationWithUser>,
@@ -89,7 +89,7 @@ pub struct MintWithRecommendationsAndInfo {
 }
 
 /// Mint with its recommendations
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct MintWithRecommendations {
     pub mint: Mint,
     pub recommendations: Vec<RecommendationWithUser>,
@@ -98,14 +98,14 @@ pub struct MintWithRecommendations {
 }
 
 /// Recommendation with user profile
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct RecommendationWithUser {
     pub recommendation: Recommendation,
     pub user_profile: Option<UserProfile>,
 }
 
 /// User with their activity
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct UserWithActivity {
     pub profile: UserProfile,
     pub recommendations_count: usize,
@@ -165,7 +165,7 @@ pub struct MintHealthRecord {
 }
 
 /// Health summary for API responses
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct MintHealthSummary {
     pub mint_url: String,
     pub is_online: bool,
@@ -179,7 +179,7 @@ pub struct MintHealthSummary {
 }
 
 /// Query parameters for filtering mints
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Hash)]
 pub struct MintQueryParams {
     /// Optional mint type filter: "cashu", "fedimint", or None for all
     #[serde(rename = "type")]
@@ -188,4 +188,98 @@ pub struct MintQueryParams {
     pub minting: Option<String>,
     /// Comma-separated list of currencies that must support melting (only for Cashu mints)
     pub melting: Option<String>,
+}
+
+/// Cache key types for different cached data
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub enum CacheKey {
+    AllMints,
+    CashuMints,
+    FedimintMints,
+    AllUsers,
+    AllRecommendations,
+    AllRawEvents,
+    AllMintInfo,
+    AllHealthSummaries,
+    MintsByQuery(String), // Serialized query parameters
+    RecommendationByEventId(String),
+    UserProfile(String),       // pubkey
+    MintHealthSummary(String), // mint_url
+}
+
+impl std::fmt::Display for CacheKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CacheKey::AllMints => write!(f, "all_mints"),
+            CacheKey::CashuMints => write!(f, "cashu_mints"),
+            CacheKey::FedimintMints => write!(f, "fedimint_mints"),
+            CacheKey::AllUsers => write!(f, "all_users"),
+            CacheKey::AllRecommendations => write!(f, "all_recommendations"),
+            CacheKey::AllRawEvents => write!(f, "all_raw_events"),
+            CacheKey::AllMintInfo => write!(f, "all_mint_info"),
+            CacheKey::AllHealthSummaries => write!(f, "all_health_summaries"),
+            CacheKey::MintsByQuery(query) => write!(f, "mints_by_query_{}", query),
+            CacheKey::RecommendationByEventId(event_id) => write!(f, "recommendation_{}", event_id),
+            CacheKey::UserProfile(pubkey) => write!(f, "user_profile_{}", pubkey),
+            CacheKey::MintHealthSummary(mint_url) => write!(f, "mint_health_{}", mint_url),
+        }
+    }
+}
+
+/// Cached data wrapper with timestamp for TTL
+#[derive(Debug, Clone)]
+pub struct CachedData<T> {
+    pub data: T,
+    pub cached_at: DateTime<Utc>,
+    pub ttl_seconds: i64,
+}
+
+impl<T> CachedData<T> {
+    pub fn new(data: T, ttl_seconds: i64) -> Self {
+        Self {
+            data,
+            cached_at: Utc::now(),
+            ttl_seconds,
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
+        let elapsed = Utc::now().signed_duration_since(self.cached_at);
+        elapsed.num_seconds() > self.ttl_seconds
+    }
+
+    pub fn expires_at(&self) -> DateTime<Utc> {
+        self.cached_at + chrono::Duration::seconds(self.ttl_seconds)
+    }
+}
+
+/// Cache statistics for monitoring
+#[derive(Debug, Clone, Serialize)]
+pub struct CacheStats {
+    pub total_entries: usize,
+    pub hit_count: u64,
+    pub miss_count: u64,
+    pub hit_rate: f64,
+    pub expired_entries: usize,
+}
+
+impl CacheStats {
+    pub fn new() -> Self {
+        Self {
+            total_entries: 0,
+            hit_count: 0,
+            miss_count: 0,
+            hit_rate: 0.0,
+            expired_entries: 0,
+        }
+    }
+
+    pub fn calculate_hit_rate(&mut self) {
+        let total = self.hit_count + self.miss_count;
+        self.hit_rate = if total > 0 {
+            self.hit_count as f64 / total as f64
+        } else {
+            0.0
+        };
+    }
 }

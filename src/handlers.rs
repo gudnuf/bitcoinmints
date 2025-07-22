@@ -1,20 +1,21 @@
-use crate::database::Database;
+use crate::cached_database::CachedDatabase;
 use crate::models::MintQueryParams;
 use crate::models::*;
+use crate::ui::pages::review_detail::render_review_detail_page;
 use crate::ui::{render_mints_page, render_reviews_page};
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::Html,
     Json,
 };
 use tracing::error;
 
-/// GET /api/mints - Get all mints with their recommendations
+/// GET /api/mints - Get all mints with their recommendations (cached)
 pub async fn get_mints(
-    State(database): State<Database>,
+    State(cached_database): State<CachedDatabase>,
 ) -> Result<Json<MintsResponse>, (StatusCode, String)> {
-    match database.get_mints_with_recommendations(None).await {
+    match cached_database.get_mints_with_recommendations(None).await {
         Ok(mints) => Ok(Json(MintsResponse { mints })),
         Err(e) => {
             error!(
@@ -30,11 +31,11 @@ pub async fn get_mints(
     }
 }
 
-/// GET /api/users - Get all users with their activity
+/// GET /api/users - Get all users with their activity (cached)
 pub async fn get_users(
-    State(database): State<Database>,
+    State(cached_database): State<CachedDatabase>,
 ) -> Result<Json<UsersResponse>, (StatusCode, String)> {
-    match database.get_users_with_activity().await {
+    match cached_database.get_users_with_activity().await {
         Ok(users) => Ok(Json(UsersResponse { users })),
         Err(e) => {
             error!(
@@ -50,11 +51,11 @@ pub async fn get_users(
     }
 }
 
-/// GET /api/events/raw - Get all raw events (for debugging)
+/// GET /api/events/raw - Get all raw events (cached)
 pub async fn get_raw_events(
-    State(database): State<Database>,
+    State(cached_database): State<CachedDatabase>,
 ) -> Result<Json<Vec<RawEvent>>, (StatusCode, String)> {
-    match database.get_all_raw_events().await {
+    match cached_database.get_all_raw_events().await {
         Ok(events) => Ok(Json(events)),
         Err(e) => {
             error!(
@@ -75,15 +76,15 @@ pub async fn health_check() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
         "service": "bitcoinmints-retyr",
-        "message": "NIP-87 Nostr event collector is running"
+        "message": "NIP-87 Nostr event collector is running with caching enabled"
     }))
 }
 
 /// POST /api/cleanup - Clean up duplicate mints by normalizing URLs
 pub async fn cleanup_mints(
-    State(database): State<Database>,
+    State(cached_database): State<CachedDatabase>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    match database.cleanup_duplicate_mints().await {
+    match cached_database.cleanup_duplicate_mints().await {
         Ok(_) => Ok(Json(serde_json::json!({
             "status": "success",
             "message": "Mint URL normalization and duplicate cleanup completed"
@@ -102,11 +103,11 @@ pub async fn cleanup_mints(
     }
 }
 
-/// GET /api/stats - Get mint statistics for debugging
+/// GET /api/stats - Get mint statistics (cached)
 pub async fn mint_stats(
-    State(database): State<Database>,
+    State(cached_database): State<CachedDatabase>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    match database.get_mint_statistics().await {
+    match cached_database.get_mint_statistics().await {
         Ok(stats) => Ok(Json(stats)),
         Err(e) => {
             error!(
@@ -122,12 +123,12 @@ pub async fn mint_stats(
     }
 }
 
-/// GET /mints - Frontend mint list page
+/// GET /mints - Frontend mint list page (cached)
 pub async fn mints_page(
-    State(database): State<Database>,
+    State(cached_database): State<CachedDatabase>,
     Query(params): Query<MintQueryParams>,
 ) -> Result<Html<String>, (StatusCode, String)> {
-    match database
+    match cached_database
         .get_mints_with_recommendations_and_info(&params)
         .await
     {
@@ -149,11 +150,11 @@ pub async fn mints_page(
     }
 }
 
-/// GET /reviews - Frontend reviews page
+/// GET /reviews - Frontend reviews page (cached)
 pub async fn reviews_page(
-    State(database): State<Database>,
+    State(cached_database): State<CachedDatabase>,
 ) -> Result<Html<String>, (StatusCode, String)> {
-    match database.get_all_recommendations().await {
+    match cached_database.get_all_recommendations().await {
         Ok(recommendations) => {
             let markup = render_reviews_page(&recommendations);
             Ok(Html(markup.into_string()))
@@ -172,12 +173,40 @@ pub async fn reviews_page(
     }
 }
 
-/// GET /api/mint-info - Get detailed mint information from /v1/info endpoints
+/// GET /review/{event_id} - Individual review detail page (cached)
+pub async fn review_detail_page(
+    Path(event_id): Path<String>,
+    State(cached_database): State<CachedDatabase>,
+) -> Result<Html<String>, (StatusCode, String)> {
+    match cached_database
+        .get_recommendation_by_event_id(&event_id)
+        .await
+    {
+        Ok(recommendation) => {
+            let markup = render_review_detail_page(recommendation.as_ref());
+            Ok(Html(markup.into_string()))
+        }
+        Err(e) => {
+            error!(
+                target: "bitcoinmints_retyr::handlers",
+                error = %e,
+                event_id = %event_id,
+                "❌ Failed to get recommendation for frontend"
+            );
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load review: {}", e),
+            ))
+        }
+    }
+}
+
+/// GET /api/mint-info - Get detailed mint information from /v1/info endpoints (cached)
 pub async fn get_mint_info(
-    State(database): State<Database>,
+    State(cached_database): State<CachedDatabase>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    // Get all stored mint info from the database
-    let mint_info_records = match database.get_all_stored_mint_info().await {
+    // Get all stored mint info from the cached database
+    let mint_info_records = match cached_database.get_all_stored_mint_info().await {
         Ok(records) => records,
         Err(e) => {
             error!(
@@ -229,11 +258,11 @@ pub async fn get_mint_info(
     })))
 }
 
-/// GET /api/health/status - Get health status summary for all mints
+/// GET /api/health/status - Get health status summary for all mints (cached)
 pub async fn get_health_status(
-    State(database): State<Database>,
+    State(cached_database): State<CachedDatabase>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    match database.get_all_mint_health_summaries().await {
+    match cached_database.get_all_mint_health_summaries().await {
         Ok(health_summaries) => {
             let online_count = health_summaries.iter().filter(|h| h.is_online).count();
             let total_count = health_summaries.len();
@@ -271,9 +300,9 @@ pub async fn get_health_status(
     }
 }
 
-/// GET /api/health/mint/{mint_url} - Get detailed health information for a specific mint
+/// GET /api/health/mint/{mint_url} - Get detailed health information for a specific mint (cached)
 pub async fn get_mint_health(
-    State(database): State<Database>,
+    State(cached_database): State<CachedDatabase>,
     axum::extract::Path(mint_url): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     // URL decode the mint_url parameter
@@ -284,7 +313,7 @@ pub async fn get_mint_health(
         }
     };
 
-    match database.get_mint_health_summary(&decoded_url).await {
+    match cached_database.get_mint_health_summary(&decoded_url).await {
         Ok(Some(health_summary)) => Ok(Json(
             serde_json::to_value(health_summary).unwrap_or_default(),
         )),
@@ -305,4 +334,28 @@ pub async fn get_mint_health(
             ))
         }
     }
+}
+
+/// GET /api/cache/stats - Get cache statistics
+pub async fn get_cache_stats(
+    State(cached_database): State<CachedDatabase>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let stats = cached_database.get_cache_stats().await;
+
+    Ok(Json(serde_json::json!({
+        "cache_stats": stats,
+        "message": "Cache statistics retrieved successfully"
+    })))
+}
+
+/// POST /api/cache/clear - Clear all caches
+pub async fn clear_cache(
+    State(cached_database): State<CachedDatabase>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    cached_database.clear_all_caches().await;
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "message": "All caches cleared successfully"
+    })))
 }

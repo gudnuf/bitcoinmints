@@ -10,6 +10,13 @@ pub fn get_review_styles() -> &'static str {
         grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
     }
 
+    .review-card-link {
+        text-decoration: none;
+        color: inherit;
+        display: block;
+        transition: all 0.3s ease;
+    }
+
     .review-card {
         background: var(--glass-bg);
         backdrop-filter: blur(16px);
@@ -21,6 +28,7 @@ pub fn get_review_styles() -> &'static str {
         transition: all 0.3s ease;
         position: relative;
         overflow: hidden;
+        cursor: pointer;
     }
 
     .review-card::before {
@@ -199,7 +207,8 @@ pub fn get_review_styles() -> &'static str {
 /// Render a single review card
 pub fn render_review_card(rec_with_user: &RecommendationWithUser) -> Markup {
     html! {
-        div class="review-card" {
+        a href=(format!("/review/{}", rec_with_user.recommendation.event_id)) class="review-card-link" {
+            div class="review-card" {
             div class="review-header" {
                 div class="reviewer-info" {
                     @if let Some(user_profile) = &rec_with_user.user_profile {
@@ -275,6 +284,7 @@ pub fn render_review_card(rec_with_user: &RecommendationWithUser) -> Markup {
                         rec_with_user.recommendation.created_at as i64, 0
                     ).unwrap_or_default().format("%Y-%m-%d %H:%M UTC"))
                 }
+            }
             }
         }
     }

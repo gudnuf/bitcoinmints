@@ -776,6 +776,17 @@ pub fn get_mint_styles() -> &'static str {
         }
     }
 
+    .reviewer-card-link {
+        text-decoration: none;
+        color: inherit;
+        display: block;
+        transition: all 0.3s ease;
+    }
+
+    .reviewer-card-link:hover {
+        transform: translateY(-2px);
+    }
+
     .reviewer-card {
         display: flex;
         align-items: center;
@@ -788,12 +799,12 @@ pub fn get_mint_styles() -> &'static str {
         padding: 0.75rem 1rem;
         font-size: 0.85rem;
         transition: all 0.3s ease;
+        cursor: pointer;
     }
 
     .reviewer-card:hover {
         background: rgba(255, 107, 53, 0.2);
         border-color: var(--primary-orange);
-        transform: translateY(-2px);
     }
 
     .reviewer-card .reviewer-avatar {
@@ -1224,43 +1235,45 @@ pub fn render_mint_card(mint_with_recs: &MintWithRecommendationsAndInfo) -> Mark
                     // Expanded reviewers grid (hidden by default)
                     div class="reviewers-grid" {
                         @for rec_with_user in &mint_with_recs.recommendations {
-                            div class="reviewer-card" {
-                                @if let Some(user_profile) = &rec_with_user.user_profile {
-                                    @if let Some(picture) = &user_profile.picture {
-                                        img class="reviewer-avatar" src=(picture) alt="Avatar";
-                                    } @else {
-                                        div class="no-avatar" {
-                                            @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
-                                                (name.chars().next().unwrap_or('?').to_uppercase())
-                                            } @else {
-                                                "?"
+                            a href=(format!("/review/{}", rec_with_user.recommendation.event_id)) class="reviewer-card-link" {
+                                div class="reviewer-card" {
+                                    @if let Some(user_profile) = &rec_with_user.user_profile {
+                                        @if let Some(picture) = &user_profile.picture {
+                                            img class="reviewer-avatar" src=(picture) alt="Avatar";
+                                        } @else {
+                                            div class="no-avatar" {
+                                                @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
+                                                    (name.chars().next().unwrap_or('?').to_uppercase())
+                                                } @else {
+                                                    "?"
+                                                }
                                             }
                                         }
-                                    }
-                                    div class="reviewer-name" {
-                                        @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
-                                            (name)
-                                        } @else {
+                                        div class="reviewer-name" {
+                                            @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
+                                                (name)
+                                            } @else {
+                                                (format!("{}...{}",
+                                                    &user_profile.pubkey[0..8],
+                                                    &user_profile.pubkey[user_profile.pubkey.len()-8..]
+                                                ))
+                                            }
+                                        }
+                                    } @else {
+                                        div class="no-avatar" { "?" }
+                                        div class="reviewer-name" {
                                             (format!("{}...{}",
-                                                &user_profile.pubkey[0..8],
-                                                &user_profile.pubkey[user_profile.pubkey.len()-8..]
+                                                &rec_with_user.recommendation.reviewer_pubkey[0..8],
+                                                &rec_with_user.recommendation.reviewer_pubkey[rec_with_user.recommendation.reviewer_pubkey.len()-8..]
                                             ))
                                         }
                                     }
-                                } @else {
-                                    div class="no-avatar" { "?" }
-                                    div class="reviewer-name" {
-                                        (format!("{}...{}",
-                                            &rec_with_user.recommendation.reviewer_pubkey[0..8],
-                                            &rec_with_user.recommendation.reviewer_pubkey[rec_with_user.recommendation.reviewer_pubkey.len()-8..]
-                                        ))
-                                    }
-                                }
-                                div class="reviewer-rating" {
-                                    @if let Some(rating) = rec_with_user.recommendation.rating {
-                                        (rating)
-                                    } @else {
-                                        span style="color: rgba(255, 255, 255, 0.5); font-style: italic;" { "No rating" }
+                                    div class="reviewer-rating" {
+                                        @if let Some(rating) = rec_with_user.recommendation.rating {
+                                            (rating)
+                                        } @else {
+                                            span style="color: rgba(255, 255, 255, 0.5); font-style: italic;" { "No rating" }
+                                        }
                                     }
                                 }
                             }

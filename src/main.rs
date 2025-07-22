@@ -2,8 +2,10 @@ use anyhow::Result;
 use axum::{routing::get, Router};
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+mod cache;
+mod cached_database;
 mod database;
 mod handlers;
 mod mint_info_service;
@@ -12,10 +14,13 @@ mod nostr;
 mod ui;
 mod utils;
 
+use cache::CacheService;
+use cached_database::CachedDatabase;
 use database::Database;
 use handlers::{
-    cleanup_mints, get_health_status, get_mint_health, get_mint_info, get_mints, get_raw_events,
-    get_users, health_check, mint_stats, mints_page, reviews_page,
+    cleanup_mints, clear_cache, get_cache_stats, get_health_status, get_mint_health, get_mint_info,
+    get_mints, get_raw_events, get_users, health_check, mint_stats, mints_page, review_detail_page,
+    reviews_page,
 };
 use mint_info_service::MintInfoService;
 use nostr::NostrService;
@@ -28,7 +33,7 @@ async fn main() -> Result<()> {
     tracing::info!(
         target: "bitcoinmints_retyr",
         version = env!("CARGO_PKG_VERSION"),
-        "🚀 Starting bitcoinmints-retyr - NIP-87 Nostr event collector"
+        "🚀 Starting bitcoinmints-retyr - NIP-87 Nostr event collector with caching"
     );
 
     // Initialize database
@@ -37,6 +42,68 @@ async fn main() -> Result<()> {
     tracing::info!(
         target: "bitcoinmints_retyr::database",
         "✅ Database initialized and migrated successfully"
+    );
+
+    // Initialize cache service
+    let cache_service = CacheService::new();
+    tracing::info!(
+        target: "bitcoinmints_retyr::cache",
+        "💾 Cache service initialized"
+    );
+
+    // Start cache cleanup task
+    let _cleanup_task = cache_service.start_cleanup_task();
+    tracing::info!(
+        target: "bitcoinmints_retyr::cache",
+        "🧹 Cache cleanup task started"
+    );
+
+    // Start cache invalidation monitoring task
+    let cache_invalidation_service = cache_service.clone();
+    let database_for_cache = database.clone();
+    tokio::spawn(async move {
+        let mut last_check = chrono::Utc::now();
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30)); // Check every 30 seconds
+
+        loop {
+            interval.tick().await;
+
+            // Check for new events since last check
+            if let Ok(events) = database_for_cache.get_all_raw_events().await {
+                let mut has_new_events = false;
+
+                for event in events {
+                    if event.received_at > last_check {
+                        // New event found, invalidate relevant caches
+                        cache_invalidation_service
+                            .invalidate_on_new_event(event.kind)
+                            .await;
+                        has_new_events = true;
+                    }
+                }
+
+                if has_new_events {
+                    tracing::debug!(
+                        target: "bitcoinmints_retyr::cache",
+                        "🔄 Cache invalidated due to new events"
+                    );
+                }
+
+                last_check = chrono::Utc::now();
+            }
+        }
+    });
+
+    tracing::info!(
+        target: "bitcoinmints_retyr::cache",
+        "👁️ Cache invalidation monitor started"
+    );
+
+    // Initialize cached database
+    let cached_database = CachedDatabase::new(database.clone(), cache_service.clone());
+    tracing::info!(
+        target: "bitcoinmints_retyr::cached_database",
+        "🎯 Cached database service initialized"
     );
 
     // Initialize Nostr service
@@ -69,30 +136,26 @@ async fn main() -> Result<()> {
 
     // Initialize Mint Info Service
     let mint_info_service = MintInfoService::new(database.clone()).await?;
-    tracing::info!(
-        target: "bitcoinmints_retyr::mint_info",
-        "✅ Mint info service initialized successfully"
-    );
 
-    // Start mint info fetching in background (after a delay to let other services start)
+    // Start mint info fetching in background
     let mint_info_clone = mint_info_service.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         if let Err(e) = mint_info_clone.start().await {
             tracing::error!(
                 target: "bitcoinmints_retyr::mint_info",
                 error = %e,
-                "❌ Failed to start mint info fetching service"
+                "❌ Failed to start mint info service"
             );
         }
     });
 
-    // Build the Axum application with routes
+    // Build the router with cached database
     let app = Router::new()
         // Frontend routes
         .route("/", get(mints_page))
         .route("/mints", get(mints_page))
         .route("/reviews", get(reviews_page))
+        .route("/review/:event_id", get(review_detail_page))
         // API routes
         .route("/api", get(root_handler))
         .route("/api/health", get(health_check))
@@ -104,7 +167,10 @@ async fn main() -> Result<()> {
         .route("/api/mint-info", get(get_mint_info))
         .route("/api/health/status", get(get_health_status))
         .route("/api/health/mint/:mint_url", get(get_mint_health))
-        .with_state(database)
+        // Cache management routes (for debugging/admin)
+        .route("/api/cache/stats", get(get_cache_stats))
+        .route("/api/cache/clear", axum::routing::post(clear_cache))
+        .with_state(cached_database)
         .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()));
 
     // Start the server
@@ -112,7 +178,7 @@ async fn main() -> Result<()> {
     tracing::info!(
         target: "bitcoinmints_retyr::server",
         address = "0.0.0.0:3000",
-        "🌐 Server starting"
+        "🌐 Server starting with caching enabled"
     );
 
     tracing::info!(
@@ -123,25 +189,31 @@ async fn main() -> Result<()> {
         ("GET /", "Frontend mint list"),
         ("GET /mints", "Frontend mint list"),
         ("GET /reviews", "Frontend reviews list"),
+        ("GET /review/{event_id}", "Individual review detail page"),
         ("GET /api", "API information"),
         ("GET /api/health", "Health check"),
-        ("GET /api/mints", "Get all mints with recommendations"),
-        ("GET /api/users", "Get all users with activity"),
-        ("GET /api/events/raw", "Get all raw events (debugging)"),
+        (
+            "GET /api/mints",
+            "Get all mints with recommendations (cached)",
+        ),
+        ("GET /api/users", "Get all users with activity (cached)"),
+        ("GET /api/events/raw", "Get all raw events (cached)"),
         ("POST /api/cleanup", "Clean up duplicate mints"),
-        ("GET /api/stats", "Get mint statistics"),
+        ("GET /api/stats", "Get mint statistics (cached)"),
         (
             "GET /api/mint-info",
-            "Get detailed mint info from /v1/info endpoints",
+            "Get detailed mint info from /v1/info endpoints (cached)",
         ),
         (
             "GET /api/health/status",
-            "Get health status summary for all mints",
+            "Get health status summary for all mints (cached)",
         ),
         (
             "GET /api/health/mint/{mint_url}",
-            "Get detailed health information for a specific mint",
+            "Get detailed health information for a specific mint (cached)",
         ),
+        ("GET /api/cache/stats", "Get cache statistics"),
+        ("POST /api/cache/clear", "Clear all caches"),
     ];
 
     for (endpoint, description) in endpoints {
@@ -160,84 +232,69 @@ async fn main() -> Result<()> {
 
 /// Initialize logging with proper filtering and formatting
 fn init_logging() {
-    // Support for RUST_LOG environment variable override
-    let default_filter = "bitcoinmints_retyr=info,\
-                          sqlx=warn,\
-                          hyper=warn,\
-                          reqwest=warn,\
-                          nostr_relay_pool=warn,\
-                          nostr_sdk=info,\
-                          tower_http=warn,\
-                          axum=warn,\
-                          tokio=warn,\
-                          rustls=warn,\
-                          tungstenite=warn";
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,bitcoinmints_retyr=debug"));
 
-    let filter = EnvFilter::builder()
-        .with_default_directive(tracing::Level::WARN.into())
-        .from_env_lossy()
-        .add_directive(
-            default_filter
-                .parse()
-                .unwrap_or_else(|_| tracing::Level::INFO.into()),
-        );
+    let formatting_layer = tracing_subscriber::fmt::layer()
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false);
 
-    // Check if we should use JSON formatting (for production)
-    let use_json = std::env::var("LOG_FORMAT")
-        .map(|v| v.to_lowercase() == "json")
-        .unwrap_or(false);
-
-    if use_json {
-        // JSON formatting for production environments
-        let json_layer = tracing_subscriber::fmt::layer()
-            .json()
-            .with_target(true)
-            .with_level(true)
-            .with_thread_ids(false)
-            .with_file(false)
-            .with_line_number(false)
-            .with_filter(filter);
-
-        tracing_subscriber::registry().with(json_layer).init();
-    } else {
-        // Pretty formatting for development
-        let fmt_layer = tracing_subscriber::fmt::layer()
-            .with_target(true)
-            .with_level(true)
-            .with_thread_ids(false)
-            .with_file(false)
-            .with_line_number(false)
-            .with_ansi(true)
-            .compact()
-            .with_filter(filter);
-
-        tracing_subscriber::registry().with(fmt_layer).init();
-    }
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(formatting_layer)
+        .init();
 }
 
-/// Root handler that returns API information
+/// Root API handler
 async fn root_handler() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({
         "name": "bitcoinmints-retyr",
-        "description": "NIP-87 Nostr event collector for ecash mint discoverability",
+        "description": "NIP-87 Nostr event collector for ecash mint discoverability with intelligent caching",
         "version": "0.1.0",
+        "features": [
+            "Real-time Nostr event collection",
+            "Intelligent caching with TTL",
+            "Smart cache invalidation",
+            "Health monitoring",
+            "Mint discovery and recommendations"
+        ],
         "endpoints": {
             "/": "API information (this endpoint)",
             "/api/health": "Health check",
-            "/api/mints": "Get all mints with recommendations",
-            "/api/users": "Get all users with activity",
-            "/api/events/raw": "Get all raw events (debugging)",
+            "/api/mints": "Get all mints with recommendations (cached)",
+            "/api/users": "Get all users with activity (cached)",
+            "/api/events/raw": "Get all raw events (cached)",
             "/api/cleanup": "POST - Clean up duplicate mints by normalizing URLs",
-            "/api/stats": "Get mint statistics and duplicate counts",
-            "/api/mint-info": "Get detailed mint information from /v1/info endpoints",
-            "/api/health/status": "Get health status summary for all mints",
-            "/api/health/mint/{mint_url}": "Get detailed health information for a specific mint"
+            "/api/stats": "Get mint statistics and duplicate counts (cached)",
+            "/api/mint-info": "Get detailed mint information from /v1/info endpoints (cached)",
+            "/api/health/status": "Get health status summary for all mints (cached)",
+            "/api/health/mint/{mint_url}": "Get detailed health information for a specific mint (cached)",
+            "/api/cache/stats": "Get cache performance statistics",
+            "/api/cache/clear": "POST - Clear all caches"
         },
         "nip87_events": {
             "cashu_mint": 38172,
             "fedimint": 38173,
             "recommendation": 38000,
             "user_metadata": 0
+        },
+        "caching": {
+            "enabled": true,
+            "ttl_seconds": {
+                "mints": 300,
+                "users": 600,
+                "recommendations": 300,
+                "raw_events": 120,
+                "mint_info": 600,
+                "health_summaries": 120,
+                "user_profiles": 1800,
+                "individual_recommendations": 900,
+                "mint_health": 60,
+                "query_specific": 180
+            },
+            "invalidation": "Smart invalidation based on event types"
         }
     }))
 }

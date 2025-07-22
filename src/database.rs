@@ -619,6 +619,39 @@ impl Database {
         Ok(recommendations_with_users)
     }
 
+    /// Get a specific recommendation by event_id with user profile
+    pub async fn get_recommendation_by_event_id(
+        &self,
+        event_id: &str,
+    ) -> Result<Option<RecommendationWithUser>> {
+        let recommendation_rows = sqlx::query(
+            r#"
+            SELECT id, event_id, kind, pubkey, content, tags, sig, created_at, received_at
+            FROM raw_events 
+            WHERE kind = 38000 AND event_id = ?
+            "#,
+        )
+        .bind(event_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        if let Some(row) = recommendation_rows.first() {
+            if let Ok(recommendation) = self.parse_recommendation_event(row).await {
+                // Get user profile for the reviewer
+                let user_profile = self
+                    .get_user_profile(&recommendation.reviewer_pubkey)
+                    .await?;
+
+                return Ok(Some(RecommendationWithUser {
+                    recommendation,
+                    user_profile,
+                }));
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Parse mint event from database row
     async fn parse_mint_event(&self, row: &sqlx::sqlite::SqliteRow) -> Result<Mint> {
         let tags_json: String = row.get("tags");
