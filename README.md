@@ -48,6 +48,7 @@ The application uses structured logging with proper filtering to reduce noise an
 
 ### Environment Variables
 
+- `PORT`: Server port (default: 3000)
 - `RUST_LOG`: Override default log filtering (standard Rust logging env var)
 - `LOG_FORMAT=json`: Use JSON formatting for production environments (default: pretty formatting)
 
@@ -57,6 +58,9 @@ The application uses structured logging with proper filtering to reduce noise an
 # Development - pretty formatted logs with emojis
 cargo run
 
+# Custom port
+PORT=8080 cargo run
+
 # Production - JSON formatted logs
 LOG_FORMAT=json cargo run
 
@@ -65,6 +69,9 @@ RUST_LOG=debug cargo run
 
 # Custom filtering
 RUST_LOG="bitcoinmints_retyr=debug,sqlx=info" cargo run
+
+# Combined configuration
+PORT=8080 LOG_FORMAT=json RUST_LOG=info cargo run
 ```
 
 ### Log Structure

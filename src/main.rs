@@ -173,11 +173,20 @@ async fn main() -> Result<()> {
         .with_state(cached_database)
         .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()));
 
+    // Get port from environment variable or use default
+    let port = std::env::var("PORT")
+        .unwrap_or_else(|_| "3000".to_string())
+        .parse::<u16>()
+        .unwrap_or(3000);
+
+    let bind_address = format!("0.0.0.0:{}", port);
+
     // Start the server
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+    let listener = tokio::net::TcpListener::bind(&bind_address).await?;
     tracing::info!(
         target: "bitcoinmints_retyr::server",
-        address = "0.0.0.0:3000",
+        address = %bind_address,
+        port = port,
         "🌐 Server starting with caching enabled"
     );
 
