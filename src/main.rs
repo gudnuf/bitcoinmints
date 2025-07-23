@@ -7,6 +7,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 mod cache;
 mod cached_database;
 mod database;
+mod fedimint_service;
 mod handlers;
 mod mint_info_service;
 mod models;
@@ -17,6 +18,7 @@ mod utils;
 use cache::CacheService;
 use cached_database::CachedDatabase;
 use database::Database;
+use fedimint_service::FedimintService;
 use handlers::{
     cleanup_mints, clear_cache, get_cache_stats, get_health_status, get_mint_health, get_mint_info,
     get_mints, get_raw_events, get_users, health_check, mint_stats, mints_page, review_detail_page,
@@ -33,7 +35,7 @@ async fn main() -> Result<()> {
     tracing::info!(
         target: "bitcoinmints_retyr",
         version = env!("CARGO_PKG_VERSION"),
-        "🚀 Starting bitcoinmints-retyr - NIP-87 Nostr event collector with caching"
+        "🚀 Starting bitcoinmints-retyr - NIP-87 Nostr event collector with proactive caching"
     );
 
     // Initialize database
@@ -58,35 +60,79 @@ async fn main() -> Result<()> {
         "🧹 Cache cleanup task started"
     );
 
-    // Start cache invalidation monitoring task
-    let cache_invalidation_service = cache_service.clone();
-    let database_for_cache = database.clone();
+    // Initialize cached database
+    let cached_database = CachedDatabase::new(database.clone(), cache_service.clone());
+    tracing::info!(
+        target: "bitcoinmints_retyr::cached_database",
+        "🎯 Cached database service initialized"
+    );
+
+    // Pre-fill cache with all data on startup
+    if let Err(e) = cached_database.pre_fill_cache().await {
+        tracing::error!(
+            target: "bitcoinmints_retyr::cached_database",
+            error = %e,
+            "❌ Failed to pre-fill cache on startup, continuing with empty cache"
+        );
+    } else {
+        tracing::info!(
+            target: "bitcoinmints_retyr::cached_database",
+            "🎯 Cache pre-filled successfully with all data"
+        );
+    }
+
+    // Start cache refresh background task
+    let _cache_refresh_task = cached_database.start_cache_refresh_task();
+    tracing::info!(
+        target: "bitcoinmints_retyr::cached_database",
+        "🔄 Cache refresh background task started"
+    );
+
+    // Start cache refresh monitoring task (using proactive refresh instead of invalidation)
+    let cached_database_for_refresh = cached_database.clone();
     tokio::spawn(async move {
         let mut last_check = chrono::Utc::now();
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30)); // Check every 30 seconds
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10)); // Check every 10 seconds
 
         loop {
             interval.tick().await;
 
-            // Check for new events since last check
-            if let Ok(events) = database_for_cache.get_all_raw_events().await {
-                let mut has_new_events = false;
+            // Check for new events since last check and proactively refresh cache
+            if let Ok(events) = cached_database_for_refresh
+                .database()
+                .get_all_raw_events()
+                .await
+            {
+                let mut new_event_kinds = std::collections::HashSet::new();
 
                 for event in events {
                     if event.received_at > last_check {
-                        // New event found, invalidate relevant caches
-                        cache_invalidation_service
-                            .invalidate_on_new_event(event.kind)
-                            .await;
-                        has_new_events = true;
+                        // New event found, collect event kinds for refresh
+                        new_event_kinds.insert(event.kind);
                     }
                 }
 
-                if has_new_events {
+                if !new_event_kinds.is_empty() {
                     tracing::debug!(
                         target: "bitcoinmints_retyr::cache",
-                        "🔄 Cache invalidated due to new events"
+                        event_kinds = ?new_event_kinds,
+                        "🔄 Proactively refreshing cache due to new events"
                     );
+
+                    // Refresh cache for each event kind found
+                    for event_kind in new_event_kinds {
+                        if let Err(e) = cached_database_for_refresh
+                            .refresh_cache_on_event(event_kind)
+                            .await
+                        {
+                            tracing::warn!(
+                                target: "bitcoinmints_retyr::cache",
+                                error = %e,
+                                event_kind = event_kind,
+                                "Failed to refresh cache for event kind"
+                            );
+                        }
+                    }
                 }
 
                 last_check = chrono::Utc::now();
@@ -96,14 +142,7 @@ async fn main() -> Result<()> {
 
     tracing::info!(
         target: "bitcoinmints_retyr::cache",
-        "👁️ Cache invalidation monitor started"
-    );
-
-    // Initialize cached database
-    let cached_database = CachedDatabase::new(database.clone(), cache_service.clone());
-    tracing::info!(
-        target: "bitcoinmints_retyr::cached_database",
-        "🎯 Cached database service initialized"
+        "👁️ Cache refresh monitor started"
     );
 
     // Initialize Nostr service
@@ -149,6 +188,21 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Initialize Fedimint Service
+    let fedimint_service = FedimintService::new(database.clone()).await?;
+
+    // Start fedimint federation config fetching in background
+    let fedimint_clone = fedimint_service.clone();
+    tokio::spawn(async move {
+        if let Err(e) = fedimint_clone.start().await {
+            tracing::error!(
+                target: "bitcoinmints_retyr::fedimint",
+                error = %e,
+                "❌ Failed to start fedimint service"
+            );
+        }
+    });
+
     // Build the router with cached database
     let app = Router::new()
         // Static assets
@@ -189,7 +243,7 @@ async fn main() -> Result<()> {
         target: "bitcoinmints_retyr::server",
         address = %bind_address,
         port = port,
-        "🌐 Server starting with caching enabled"
+        "🌐 Server starting with proactive pre-filled caching enabled"
     );
 
     tracing::info!(
@@ -262,12 +316,13 @@ fn init_logging() {
 async fn root_handler() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({
         "name": "bitcoinmints-retyr",
-        "description": "NIP-87 Nostr event collector for ecash mint discoverability with intelligent caching",
+        "description": "NIP-87 Nostr event collector for ecash mint discoverability with proactive pre-filled caching",
         "version": "0.1.0",
         "features": [
             "Real-time Nostr event collection",
-            "Intelligent caching with TTL",
-            "Smart cache invalidation",
+            "Proactive cache pre-filling on startup",
+            "Intelligent cache refresh based on data changes",
+            "Background cache warming and maintenance",
             "Health monitoring",
             "Mint discovery and recommendations"
         ],
@@ -293,19 +348,25 @@ async fn root_handler() -> axum::Json<serde_json::Value> {
         },
         "caching": {
             "enabled": true,
+            "strategy": "Proactive pre-filled cache with intelligent refresh",
+            "pre_filled_on_startup": true,
             "ttl_seconds": {
-                "mints": 300,
+                "mints": 120,
                 "users": 600,
-                "recommendations": 300,
+                "recommendations": 120,
                 "raw_events": 120,
                 "mint_info": 600,
                 "health_summaries": 120,
                 "user_profiles": 1800,
                 "individual_recommendations": 900,
                 "mint_health": 60,
-                "query_specific": 180
+                "query_specific": 120
             },
-            "invalidation": "Smart invalidation based on event types"
+            "refresh_strategy": "Smart refresh based on event types with periodic background refresh",
+            "refresh_intervals": {
+                "event_driven": "10 seconds",
+                "periodic_full_refresh": "30 seconds"
+            }
         }
     }))
 }

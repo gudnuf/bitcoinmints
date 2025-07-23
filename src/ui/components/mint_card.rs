@@ -18,6 +18,14 @@ pub struct NutCapability {
     pub is_supported: bool,
 }
 
+/// Fedimint module capability information
+#[derive(Debug, Clone)]
+pub struct ModuleCapability {
+    pub module_id: String,
+    pub module_name: String,
+    pub is_supported: bool,
+}
+
 /// Extract all currency capabilities from a list of mints
 pub fn extract_currency_capabilities(
     mints: &[MintWithRecommendationsAndInfo],
@@ -116,6 +124,50 @@ pub fn extract_nut_capabilities(mints: &[MintWithRecommendationsAndInfo]) -> Vec
     result
 }
 
+/// Extract all fedimint module capabilities from a list of mints
+pub fn extract_module_capabilities(
+    mints: &[MintWithRecommendationsAndInfo],
+) -> Vec<ModuleCapability> {
+    let mut modules: HashMap<String, bool> = HashMap::new();
+
+    // Define module descriptions
+    let module_descriptions: HashMap<&str, &str> = [
+        ("0", "Lightning Network Gateway"),
+        ("1", "Mint (Bitcoin backing)"),
+        ("2", "Wallet (On-chain Bitcoin)"),
+        ("3", "Unknown Module"),
+    ]
+    .iter()
+    .cloned()
+    .collect();
+
+    for mint in mints {
+        // Only process Fedimint mints
+        if mint.mint.mint_type.to_lowercase() != "fedimint" {
+            continue;
+        }
+
+        for module in &mint.mint.modules {
+            modules.insert(module.clone(), true);
+        }
+    }
+
+    let mut result: Vec<ModuleCapability> = modules
+        .into_iter()
+        .map(|(module_id, _)| ModuleCapability {
+            module_name: module_descriptions
+                .get(module_id.as_str())
+                .unwrap_or(&"Custom Module")
+                .to_string(),
+            module_id,
+            is_supported: true,
+        })
+        .collect();
+
+    result.sort_by(|a, b| a.module_id.cmp(&b.module_id));
+    result
+}
+
 /// Render Cashu-specific currency and NUT filters
 pub fn render_cashu_filters(
     capabilities: &[CurrencyCapability],
@@ -204,6 +256,53 @@ pub fn render_cashu_filters(
     }
 }
 
+/// Render Fedimint-specific module filters
+pub fn render_fedimint_filters(module_capabilities: &[ModuleCapability]) -> Markup {
+    html! {
+        div class="fedimint-filters" id="fedimint-filters" {
+            div class="fedimint-filter-header" {
+                span class="filter-icon" { "🔵" }
+                span class="filter-title" { "Fedimint Filters" }
+            }
+
+            @if module_capabilities.is_empty() {
+                div class="no-filters-message" {
+                    "No Fedimint instances with module information available"
+                }
+            } @else {
+                div class="filter-sections" {
+                    // Module Filters Section
+                    div class="filter-section" {
+                        div class="section-title" { "Module Support" }
+                        div class="modules-grid" {
+                            @for module in module_capabilities {
+                                label class="module-option" {
+                                    input
+                                        type="checkbox"
+                                        class="filter-checkbox module-filter"
+                                        data-module=(module.module_id)
+                                        onchange="updateFedimintFilters()";
+                                    span class="module-label" { "Module " (module.module_id) }
+                                    span class="module-description" { (module.module_name) }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                div class="filter-actions" {
+                    button class="filter-action-btn clear" onclick="clearFedimintFilters()" {
+                        "Clear All"
+                    }
+                    button class="filter-action-btn select" onclick="selectAllFedimintFilters()" {
+                        "Select All"
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Get mint-specific styles
 pub fn get_mint_styles() -> &'static str {
     "
@@ -214,14 +313,17 @@ pub fn get_mint_styles() -> &'static str {
     }
 
     .filter-section {
-        background: var(--glass-bg);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 2px solid var(--glass-border);
         border-radius: 24px;
         padding: 1.5rem;
         margin-bottom: 1.5rem;
         box-shadow: var(--glass-shadow);
+
+        background: rgba(0, 0, 0, 0.5);
+        border: 2px solid rgba(255, 255, 255, 0.15);
+        backdrop-filter: blur(30px);
+        -webkit-backdrop-filter: blur(30px);
+        /* iOS color fallback */
+        background-color: rgba(15, 23, 42, 0.9);
     }
 
     .filter-title {
@@ -238,54 +340,7 @@ pub fn get_mint_styles() -> &'static str {
         flex-wrap: wrap;
     }
 
-    .filter-btn {
-        background: rgba(255, 255, 255, 0.08);
-        backdrop-filter: blur(15px);
-        -webkit-backdrop-filter: blur(15px);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: 20px;
-        padding: 0.875rem 1.5rem;
-        color: var(--text-primary);
-        font-size: 16px; /* Prevent iOS zoom */
-        font-weight: 700;
-        cursor: pointer;
-        transition: all 0.3s ease;
-        white-space: nowrap;
-        min-height: 44px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-        /* iOS optimizations */
-        -webkit-appearance: none;
-        appearance: none;
-        -webkit-transform: translateZ(0);
-        transform: translateZ(0);
-        -webkit-tap-highlight-color: transparent;
-    }
 
-    .filter-btn:hover,
-    .filter-btn:active {
-        background: rgba(255, 107, 53, 0.25);
-        border-color: var(--primary-orange);
-        color: white;
-        transform: translateY(-3px) translateZ(0);
-        box-shadow: 0 10px 30px rgba(255, 107, 53, 0.4);
-    }
-
-    .filter-btn.active {
-        background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
-        border-color: var(--primary-orange);
-        color: white;
-        box-shadow: 0 10px 30px rgba(255, 107, 53, 0.5);
-        transform: translateY(-2px) translateZ(0);
-    }
-
-    .filter-btn.active:hover,
-    .filter-btn.active:active {
-        transform: translateY(-4px) translateZ(0);
-        box-shadow: 0 15px 40px rgba(255, 107, 53, 0.6);
-    }
 
     .cashu-filters {
         background: rgba(0, 0, 0, 0.6);
@@ -301,6 +356,72 @@ pub fn get_mint_styles() -> &'static str {
     .cashu-filters.active {
         display: block;
         animation: slideDown 0.3s ease;
+    }
+
+    .fedimint-filters {
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(15px);
+        -webkit-backdrop-filter: blur(15px);
+        border: 2px solid rgba(59, 130, 246, 0.3);
+        border-radius: 16px;
+        padding: 1rem;
+        margin-top: 1rem;
+        display: none;
+    }
+
+    .fedimint-filters.active {
+        display: block;
+        animation: slideDown 0.3s ease;
+    }
+
+    .fedimint-filter-header {
+        color: var(--text-primary);
+        font-size: 0.95rem;
+        font-weight: 700;
+        margin-bottom: 0.75rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+
+    .modules-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 0.4rem;
+    }
+
+    .module-option {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+        min-height: 36px;
+        padding: 0.4rem 0.6rem;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        transition: all 0.2s ease;
+    }
+
+    .module-option:hover {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(59, 130, 246, 0.3);
+    }
+
+    .module-label {
+        color: var(--primary-blue);
+        font-weight: 600;
+        font-size: 0.75rem;
+        min-width: 70px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+
+    .module-description {
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 0.7rem;
+        flex: 1;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .cashu-filter-header {
@@ -336,12 +457,7 @@ pub fn get_mint_styles() -> &'static str {
         gap: 0.75rem;
     }
 
-    .filter-section {
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 12px;
-        padding: 0.75rem;
-    }
+
 
     .section-title {
         color: var(--text-primary);
@@ -504,12 +620,18 @@ pub fn get_mint_styles() -> &'static str {
         display: flex;
         align-items: center;
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        /* iOS optimizations */
+        -webkit-appearance: none;
+        appearance: none;
+        -webkit-transform: translateZ(0);
+        transform: translateZ(0);
+        -webkit-tap-highlight-color: transparent;
     }
 
     .filter-action-btn:hover {
         background: rgba(255, 255, 255, 0.2);
         color: white;
-        transform: translateY(-1px);
+        transform: translateY(-1px) translateZ(0);
     }
 
     .filter-action-btn.clear {
@@ -521,7 +643,7 @@ pub fn get_mint_styles() -> &'static str {
     .filter-action-btn.clear:hover {
         background: rgba(239, 68, 68, 0.4);
         color: white;
-        transform: translateY(-2px);
+        transform: translateY(-2px) translateZ(0);
     }
 
     .mint-card {
@@ -813,6 +935,34 @@ pub fn get_mint_styles() -> &'static str {
         font-size: 0.75rem;
         font-weight: 700;
         box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        text-decoration: none;
+        display: inline-block;
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+
+    a.nut-badge:hover {
+        background: linear-gradient(135deg, #059669, var(--accent-green));
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(16, 185, 129, 0.6);
+    }
+
+    a.nut-badge:active {
+        transform: translateY(0);
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+    }
+
+    .module-badge {
+        background: linear-gradient(135deg, var(--primary-blue), var(--light-blue));
+        color: white;
+        padding: 0.375rem 0.875rem;
+        border-radius: 16px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        box-shadow: 0 4px 12px rgba(30, 64, 175, 0.4);
         text-transform: uppercase;
         letter-spacing: 0.5px;
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
@@ -1265,6 +1415,295 @@ pub fn get_mint_styles() -> &'static str {
             padding: 2rem;
         }
     }
+
+    /* Rating Filter Styles */
+    .rating-filter-section {
+        background: var(--glass-bg);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 2px solid var(--glass-border);
+        border-radius: 20px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        box-shadow: var(--glass-shadow);
+    }
+
+    .rating-filter-title {
+        color: var(--text-primary);
+        font-size: 1.1rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+        text-align: center;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+    }
+
+    .rating-slider-container {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        align-items: center;
+    }
+
+    .rating-slider-wrapper {
+        position: relative;
+        width: 100%;
+        max-width: 400px;
+    }
+
+    .rating-slider {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 100%;
+        height: 8px;
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 10px;
+        outline: none;
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+
+    .rating-slider.slider-inactive {
+        background: rgba(255, 255, 255, 0.1);
+        opacity: 0.6;
+    }
+
+    .rating-slider.slider-active {
+        background: rgba(255, 255, 255, 0.2);
+        opacity: 1;
+    }
+
+    .rating-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        /* iOS optimizations */
+        -webkit-transform: translateZ(0);
+        transform: translateZ(0);
+    }
+
+    .rating-slider.slider-inactive::-webkit-slider-thumb {
+        background: rgba(255, 255, 255, 0.4);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    .rating-slider.slider-active::-webkit-slider-thumb {
+        background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
+        box-shadow: 0 4px 12px rgba(255, 107, 53, 0.4);
+    }
+
+    .rating-slider::-webkit-slider-thumb:hover {
+        transform: scale(1.1) translateZ(0);
+        box-shadow: 0 6px 20px rgba(255, 107, 53, 0.6);
+    }
+
+    .rating-slider::-moz-range-thumb {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+    }
+
+    .rating-slider.slider-inactive::-moz-range-thumb {
+        background: rgba(255, 255, 255, 0.4);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    .rating-slider.slider-active::-moz-range-thumb {
+        background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
+        box-shadow: 0 4px 12px rgba(255, 107, 53, 0.4);
+    }
+
+    .rating-slider::-moz-range-thumb:hover {
+        transform: scale(1.1);
+        box-shadow: 0 6px 20px rgba(255, 107, 53, 0.6);
+    }
+
+    .rating-slider:focus {
+        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.3);
+    }
+
+    .rating-display {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 1.1rem;
+        color: var(--text-primary);
+        font-weight: 600;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+        transition: all 0.3s ease;
+    }
+
+    .rating-display.rating-inactive {
+        opacity: 0.7;
+    }
+
+    .rating-display.rating-active {
+        opacity: 1;
+    }
+
+    .rating-value {
+        font-weight: 800;
+        font-size: 1.3rem;
+        min-width: 4rem;
+        text-align: center;
+        transition: all 0.3s ease;
+    }
+
+    .rating-inactive .rating-value {
+        color: var(--text-secondary);
+        background: none;
+        -webkit-text-fill-color: var(--text-secondary);
+    }
+
+    .rating-active .rating-value {
+        background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .rating-label {
+        color: var(--text-secondary);
+        font-size: 0.95rem;
+        font-style: italic;
+        transition: all 0.3s ease;
+    }
+
+    .rating-inactive .rating-label {
+        opacity: 0.8;
+    }
+
+    .rating-active .rating-label {
+        opacity: 1;
+        font-style: normal;
+    }
+
+    .rating-controls {
+        display: flex;
+        justify-content: center;
+    }
+
+    .rating-reset-btn {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: var(--text-primary);
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        /* iOS optimizations */
+        -webkit-appearance: none;
+        appearance: none;
+        -webkit-transform: translateZ(0);
+        transform: translateZ(0);
+        -webkit-tap-highlight-color: transparent;
+        min-height: 44px;
+    }
+
+    .rating-reset-btn:hover {
+        background: rgba(255, 255, 255, 0.2);
+        border-color: var(--primary-orange);
+        transform: translateY(-2px) translateZ(0);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .rating-reset-btn:active {
+        transform: translateY(0) translateZ(0);
+    }
+
+    /* Mobile responsive design for rating filter */
+    @media (max-width: 480px) {
+        .rating-filter-section {
+            padding: 1rem;
+            border-radius: 16px;
+            margin: 0.75rem 0;
+        }
+
+        .rating-filter-title {
+            font-size: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .rating-slider-container {
+            gap: 0.75rem;
+        }
+
+        .rating-slider-wrapper {
+            max-width: 300px;
+        }
+
+        .rating-slider {
+            height: 6px;
+        }
+
+        .rating-slider::-webkit-slider-thumb {
+            width: 20px;
+            height: 20px;
+        }
+
+        .rating-slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+        }
+
+        .rating-display {
+            font-size: 1rem;
+        }
+
+        .rating-value {
+            font-size: 1.15rem;
+        }
+
+        .rating-label {
+            font-size: 0.85rem;
+        }
+
+        .rating-reset-btn {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.8rem;
+            border-radius: 16px;
+        }
+    }
+
+    @media (min-width: 481px) and (max-width: 768px) {
+        .rating-filter-section {
+            padding: 1.25rem;
+        }
+
+        .rating-slider-wrapper {
+            max-width: 350px;
+        }
+    }
+
+    @media (min-width: 769px) {
+        .rating-filter-section {
+            padding: 2rem;
+        }
+
+        .rating-slider-wrapper {
+            max-width: 500px;
+        }
+
+        .rating-display {
+            font-size: 1.2rem;
+        }
+
+        .rating-value {
+            font-size: 1.4rem;
+        }
+    }
     "
 }
 
@@ -1464,15 +1903,81 @@ pub fn render_mint_card(mint_with_recs: &MintWithRecommendationsAndInfo) -> Mark
                         }
                     }
 
-                    // Display supported NUTs
-                    @let supported_nuts = get_supported_nuts(&mint_with_recs.mint.nuts);
-                    @if !supported_nuts.is_empty() {
-                        div class="info-item" style="grid-column: 1 / -1;" {
-                            div class="info-label" { "Supported NUTs (Protocols)" }
-                            div class="nuts-container" {
-                                @for nut in supported_nuts {
-                                    span class="nut-badge" { "NUT-" (nut) }
+                    // Display supported NUTs for Cashu
+                    @if mint_with_recs.mint.mint_type == "cashu" {
+                        @let supported_nuts = get_supported_nuts(&mint_with_recs.mint.nuts);
+                        @if !supported_nuts.is_empty() {
+                            div class="info-item" style="grid-column: 1 / -1;" {
+                                div class="info-label" { "Supported NUTs (Protocols)" }
+                                div class="nuts-container" {
+                                    @for nut in supported_nuts {
+                                        @let padded_nut = if nut.len() == 1 { format!("0{}", nut) } else { nut.clone() };
+                                        @let spec_url = format!("https://github.com/cashubtc/nuts/blob/main/{}.md", padded_nut);
+                                        a href=(spec_url) target="_blank" class="nut-badge" { "NUT-" (nut) }
+                                    }
                                 }
+                            }
+                        }
+                    }
+
+                    // Display supported modules for Fedimint
+                    @if mint_with_recs.mint.mint_type == "fedimint" && !mint_with_recs.mint.modules.is_empty() {
+                        div class="info-item" style="grid-column: 1 / -1;" {
+                            div class="info-label" { "Supported Modules" }
+                            div class="nuts-container" {
+                                @for module in &mint_with_recs.mint.modules {
+                                    span class="module-badge" { "Module " (module) }
+                                }
+                            }
+                        }
+                    }
+
+                    // Display federation-specific info for Fedimint
+                    @if mint_with_recs.mint.mint_type == "fedimint" {
+                        @if let Some(federation_id) = &mint_with_recs.mint.federation_id {
+                            div class="info-item" {
+                                div class="info-label" { "Federation ID" }
+                                div class="info-value" {
+                                    (format!("{}...{}",
+                                        &federation_id[0..16.min(federation_id.len())],
+                                        &federation_id[federation_id.len().saturating_sub(16)..]
+                                    ))
+                                }
+                            }
+                        }
+
+                        @if !mint_with_recs.mint.invite_codes.is_empty() {
+                            div class="info-item" style="grid-column: 1 / -1;" {
+                                div class="info-label" { "Federation Invite Codes" }
+                                div class="nuts-container" {
+                                    @for invite_code in &mint_with_recs.mint.invite_codes {
+                                        a href=(format!("https://fmo.sirion.io/config/{}", invite_code))
+                                          target="_blank"
+                                          class="module-badge"
+                                          style="text-decoration: none; color: white; cursor: pointer; transition: all 0.3s ease;"
+                                          onmouseover="setHoverStyle(this, 'rgba(59, 130, 246, 0.8)')"
+                                          onmouseout="clearHoverStyle(this)" {
+                                            (format!("{}...{}",
+                                                &invite_code[0..12.min(invite_code.len())],
+                                                &invite_code[invite_code.len().saturating_sub(12)..]
+                                            ))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        @if let Some(guardians_count) = mint_with_recs.mint.guardians_count {
+                            div class="info-item" {
+                                div class="info-label" { "Guardians" }
+                                div class="info-value" { (guardians_count) " guardians" }
+                            }
+                        }
+
+                        @if let Some(welcome_message) = mint_with_recs.mint.meta.get("welcome_message").and_then(|v| v.as_str()) {
+                            div class="info-item" style="grid-column: 1 / -1;" {
+                                div class="info-label" { "Welcome Message" }
+                                div class="info-value" { (welcome_message) }
                             }
                         }
                     }

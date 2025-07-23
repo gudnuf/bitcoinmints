@@ -303,6 +303,76 @@ pub fn get_shared_styles() -> &'static str {
         -webkit-overflow-scrolling: touch;
     }
 
+    /* Filter button styles - general (non-iOS) */
+    .filter-btn {
+        background: 
+            linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(200, 200, 200, 0.05) 50%, rgba(150, 150, 150, 0.1) 100%),
+            rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 20px;
+        padding: 0.875rem 1.5rem;
+        color: rgba(220, 220, 220, 0.8);
+        font-size: 16px; /* Prevent iOS zoom */
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        white-space: nowrap;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        box-shadow: 
+            0 4px 16px rgba(0, 0, 0, 0.25),
+            inset 0 1px 0 rgba(255, 255, 255, 0.1),
+            inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+        position: relative;
+        overflow: hidden;
+        /* iOS optimizations */
+        -webkit-appearance: none;
+        appearance: none;
+        -webkit-transform: translateZ(0);
+        transform: translateZ(0);
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .filter-btn::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, transparent 50%, rgba(255, 255, 255, 0.02) 100%);
+        border-radius: inherit;
+        pointer-events: none;
+    }
+
+    .filter-btn:hover,
+    .filter-btn:active {
+        background: rgba(255, 107, 53, 0.25);
+        border-color: var(--primary-orange);
+        color: white;
+        transform: translateY(-3px) translateZ(0);
+        box-shadow: 0 10px 30px rgba(255, 107, 53, 0.4);
+    }
+
+    .filter-btn.active {
+        background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
+        border-color: var(--primary-orange);
+        color: white;
+        box-shadow: 0 10px 30px rgba(255, 107, 53, 0.5);
+        transform: translateY(-2px) translateZ(0);
+    }
+
+    .filter-btn.active:hover,
+    .filter-btn.active:active {
+        transform: translateY(-4px) translateZ(0);
+        box-shadow: 0 15px 40px rgba(255, 107, 53, 0.6);
+    }
+
     /* Mobile-first responsive design with iOS optimizations */
     @media (max-width: 480px) {
         .dashboard-container {
@@ -459,6 +529,190 @@ pub fn get_shared_styles() -> &'static str {
         
         html {
             height: -webkit-fill-available;
+        }
+
+        /* Enhanced iOS-specific button styling for better color rendering */
+
+        /* Navigation buttons - enhanced iOS colors */
+        .nav-link {
+            background: rgba(0, 0, 0, 0.6);
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            /* iOS color fallback */
+            background-color: rgba(15, 23, 42, 0.85);
+        }
+
+        .nav-link:hover,
+        .nav-link:active {
+            background: rgba(255, 107, 53, 0.4);
+            border-color: var(--primary-orange);
+            /* iOS color fallback */
+            background-color: rgba(255, 107, 53, 0.6);
+        }
+
+        .nav-link.active {
+            background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
+            border: 2px solid var(--primary-orange);
+            box-shadow: 0 8px 25px rgba(255, 107, 53, 0.6);
+            /* iOS color fallback */
+            background-color: var(--primary-orange);
+        }
+
+        /* Filter buttons - enhanced iOS colors */
+        .filter-btn {
+            background: 
+                linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(200, 200, 200, 0.05) 50%, rgba(150, 150, 150, 0.1) 100%),
+                rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            box-shadow: 
+                0 4px 16px rgba(0, 0, 0, 0.25),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+            /* iOS color fallback for inactive state - more grey */
+            background-color: rgba(180, 180, 180, 0.2);
+            /* Dimmer text for inactive state */
+            color: rgba(220, 220, 220, 0.8);
+        }
+
+        .filter-btn:hover,
+        .filter-btn:active {
+            background: rgba(255, 107, 53, 0.25);
+            border-color: var(--primary-orange);
+            /* iOS color fallback */
+            background-color: rgba(255, 107, 53, 0.4);
+            /* Bright white text on hover */
+            color: white;
+            transform: translateY(-3px) translateZ(0);
+            box-shadow: 0 10px 30px rgba(255, 107, 53, 0.4);
+        }
+
+        .filter-btn.active {
+            background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
+            border: 2px solid var(--primary-orange);
+            /* iOS color fallback */
+            background-color: var(--primary-orange);
+            /* Ensure white text for active state */
+            color: white;
+        }
+
+        /* Filter action buttons - enhanced iOS colors */
+        .filter-action-btn {
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            /* iOS color fallback */
+            background-color: rgba(30, 41, 59, 0.9);
+        }
+
+        .filter-action-btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+            /* iOS color fallback */
+            background-color: rgba(51, 65, 85, 0.9);
+        }
+
+        .filter-action-btn.clear {
+            background: rgba(239, 68, 68, 0.25);
+            border-color: rgba(239, 68, 68, 0.4);
+            /* iOS color fallback */
+            background-color: rgba(239, 68, 68, 0.4);
+        }
+
+        .filter-action-btn.clear:hover {
+            background: rgba(239, 68, 68, 0.45);
+            /* iOS color fallback */
+            background-color: rgba(239, 68, 68, 0.6);
+        }
+
+        /* Rating reset button - enhanced iOS colors */
+        .rating-reset-btn {
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            /* iOS color fallback */
+            background-color: rgba(30, 41, 59, 0.9);
+        }
+
+        .rating-reset-btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+            border-color: var(--primary-orange);
+            /* iOS color fallback */
+            background-color: rgba(255, 107, 53, 0.3);
+        }
+
+        /* Enhanced checkbox styling for iOS */
+        .filter-checkbox {
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            background: rgba(0, 0, 0, 0.3);
+            /* iOS color fallback */
+            background-color: rgba(15, 23, 42, 0.8);
+        }
+
+        .filter-checkbox:checked {
+            background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
+            border-color: var(--primary-orange);
+            /* iOS color fallback */
+            background-color: var(--primary-orange);
+        }
+
+        /* Enhanced glass backgrounds for iOS */
+        .header-glass,
+        .stat-card,
+        .mint-card,
+        .review-card,
+        .empty-state {
+            background: rgba(0, 0, 0, 0.5);
+            border: 2px solid rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(30px);
+            -webkit-backdrop-filter: blur(30px);
+            /* iOS color fallback */
+            background-color: rgba(15, 23, 42, 0.9);
+        }
+
+        /* iOS-specific color enhancements for better contrast */
+        .mint-type {
+            background: linear-gradient(135deg, var(--primary-blue), var(--light-blue));
+            border: 1px solid var(--primary-blue);
+            /* iOS color fallback */
+            background-color: var(--primary-blue);
+        }
+
+        .review-rating {
+            background: linear-gradient(135deg, var(--secondary-orange), var(--primary-orange));
+            border: 1px solid var(--primary-orange);
+            /* iOS color fallback */
+            background-color: var(--primary-orange);
+        }
+
+        .invite-badge {
+            background: linear-gradient(135deg, var(--primary-blue), var(--light-blue));
+            border: 1px solid var(--primary-blue);
+            /* iOS color fallback */
+            background-color: var(--primary-blue);
+        }
+
+        /* Enhanced iOS-specific focus and active states */
+        button:focus,
+        .filter-btn:focus,
+        .filter-action-btn:focus,
+        .rating-reset-btn:focus,
+        .nav-link:focus {
+            outline: 2px solid var(--primary-orange);
+            outline-offset: 2px;
+        }
+
+        /* iOS-specific active state improvements */
+        button:active,
+        .filter-btn:active,
+        .filter-action-btn:active,
+        .rating-reset-btn:active,
+        .nav-link:active {
+            transform: scale(0.98) translateZ(0);
+            transition: transform 0.1s ease;
         }
     }
     "

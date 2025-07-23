@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
+use std::net::IpAddr;
 use std::time::Duration;
 use tokio::time::interval;
 use tracing::{error, info, warn};
+use url::Url;
 
 use crate::database::Database;
 use crate::models::FlexibleMintInfo;
@@ -15,6 +17,65 @@ pub struct MintInfoService {
 }
 
 impl MintInfoService {
+    /// Check if a URL points to a public domain (not localhost or private networks)
+    fn is_public_domain_url(url_str: &str) -> bool {
+        // Parse the URL
+        let url = match Url::parse(url_str) {
+            Ok(url) => url,
+            Err(_) => return false,
+        };
+
+        // Get the host
+        let host = match url.host_str() {
+            Some(host) => host,
+            None => return false,
+        };
+
+        // Check for localhost patterns
+        if host == "localhost"
+            || host == "127.0.0.1"
+            || host == "::1"
+            || host.ends_with(".localhost")
+            || host.starts_with("localhost:")
+        {
+            return false;
+        }
+
+        // Try to parse as IP address
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            // Filter out private/reserved IP ranges
+            let is_private = match ip {
+                IpAddr::V4(ipv4) => {
+                    ipv4.is_private()
+                        || ipv4.is_loopback()
+                        || ipv4.is_link_local()
+                        || ipv4.is_broadcast()
+                        || ipv4.is_documentation()
+                }
+                IpAddr::V6(ipv6) => {
+                    ipv6.is_loopback() || ipv6.is_unicast_link_local() || ipv6.is_unique_local()
+                }
+            };
+
+            if is_private {
+                return false;
+            }
+        }
+
+        // Check for private domain patterns
+        if host.ends_with(".local")
+            || host.ends_with(".internal")
+            || host.ends_with(".corp")
+            || host.contains("192.168.")
+            || host.contains("10.")
+            || host.starts_with("172.")
+        {
+            return false;
+        }
+
+        true
+    }
+
     /// Create a new MintInfoService
     pub async fn new(database: Database) -> Result<Self> {
         let http_client = Client::builder()
@@ -79,21 +140,35 @@ impl MintInfoService {
         // Get mints that need info fetching (not fetched in last 4 hours)
         //  TODO: refetch sooner
         let all_mint_urls = self.database.get_mints_needing_info_fetch(1).await?;
-        let total_count = all_mint_urls.len();
 
-        // Filter out Fedimint federation invite codes (URLs starting with https://fed11)
+        // Filter out Fedimint federation invite codes and localhost/private network URLs
+        let mut fed11_filtered = 0;
+        let mut localhost_filtered = 0;
+
         let mint_urls: Vec<String> = all_mint_urls
             .into_iter()
-            .filter(|url| !url.starts_with("https://fed11"))
+            .filter(|url| {
+                if url.starts_with("https://fed11") {
+                    fed11_filtered += 1;
+                    false
+                } else if !Self::is_public_domain_url(url) {
+                    localhost_filtered += 1;
+                    false
+                } else {
+                    true
+                }
+            })
             .collect();
 
-        let filtered_out = total_count - mint_urls.len();
+        let total_filtered = fed11_filtered + localhost_filtered;
 
         info!(
             target: "bitcoinmints_retyr::mint_info",
             total_mints = mint_urls.len(),
-            filtered_fed11 = filtered_out,
-            "📊 Found mints needing info fetch"
+            fed11_filtered = fed11_filtered,
+            localhost_filtered = localhost_filtered,
+            total_filtered = total_filtered,
+            "📊 Found mints needing info fetch (filtered {} fedimint and {} localhost/private URLs)", fed11_filtered, localhost_filtered
         );
 
         let mut success_count = 0;

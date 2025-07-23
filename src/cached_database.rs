@@ -19,6 +19,319 @@ impl CachedDatabase {
         Self { database, cache }
     }
 
+    /// Pre-fill the cache with all main data types on startup
+    pub async fn pre_fill_cache(&self) -> Result<()> {
+        tracing::info!(
+            target: "bitcoinmints_retyr::cached_database",
+            "🔄 Starting cache pre-fill process..."
+        );
+
+        // Pre-fill all main cache keys in parallel for better performance
+        let results = tokio::join!(
+            self.pre_fill_mints_cache(),
+            self.pre_fill_users_cache(),
+            self.pre_fill_recommendations_cache(),
+            self.pre_fill_raw_events_cache(),
+            self.pre_fill_mint_info_cache(),
+            self.pre_fill_health_summaries_cache(),
+        );
+
+        // Check for any errors in pre-filling
+        let mut errors = Vec::new();
+
+        if let Err(e) = results.0 {
+            errors.push(format!("Mints cache: {}", e));
+        }
+        if let Err(e) = results.1 {
+            errors.push(format!("Users cache: {}", e));
+        }
+        if let Err(e) = results.2 {
+            errors.push(format!("Recommendations cache: {}", e));
+        }
+        if let Err(e) = results.3 {
+            errors.push(format!("Raw events cache: {}", e));
+        }
+        if let Err(e) = results.4 {
+            errors.push(format!("Mint info cache: {}", e));
+        }
+        if let Err(e) = results.5 {
+            errors.push(format!("Health summaries cache: {}", e));
+        }
+
+        if !errors.is_empty() {
+            tracing::warn!(
+                target: "bitcoinmints_retyr::cached_database",
+                errors = ?errors,
+                "⚠️ Some cache pre-fills failed, but continuing..."
+            );
+        }
+
+        tracing::info!(
+            target: "bitcoinmints_retyr::cached_database",
+            "✅ Cache pre-fill process completed"
+        );
+
+        Ok(())
+    }
+
+    /// Pre-fill mints cache (all variants)
+    async fn pre_fill_mints_cache(&self) -> Result<()> {
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            "Pre-filling mints cache..."
+        );
+
+        // Fill all mints
+        let all_mints = self.database.get_mints_with_recommendations(None).await?;
+        self.cache.set(&CacheKey::AllMints, all_mints, 120).await;
+
+        // Fill cashu mints
+        let cashu_mints = self
+            .database
+            .get_mints_with_recommendations(Some("cashu"))
+            .await?;
+        self.cache
+            .set(&CacheKey::CashuMints, cashu_mints, 120)
+            .await;
+
+        // Fill fedimint mints
+        let fedimint_mints = self
+            .database
+            .get_mints_with_recommendations(Some("fedimint"))
+            .await?;
+        self.cache
+            .set(&CacheKey::FedimintMints, fedimint_mints, 120)
+            .await;
+
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            "✅ Mints cache pre-filled"
+        );
+
+        Ok(())
+    }
+
+    /// Pre-fill users cache
+    async fn pre_fill_users_cache(&self) -> Result<()> {
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            "Pre-filling users cache..."
+        );
+
+        let users = self.database.get_users_with_activity().await?;
+        self.cache.set(&CacheKey::AllUsers, users, 600).await;
+
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            "✅ Users cache pre-filled"
+        );
+
+        Ok(())
+    }
+
+    /// Pre-fill recommendations cache
+    async fn pre_fill_recommendations_cache(&self) -> Result<()> {
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            "Pre-filling recommendations cache..."
+        );
+
+        let recommendations = self.database.get_all_recommendations().await?;
+        self.cache
+            .set(&CacheKey::AllRecommendations, recommendations, 120)
+            .await;
+
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            "✅ Recommendations cache pre-filled"
+        );
+
+        Ok(())
+    }
+
+    /// Pre-fill raw events cache
+    async fn pre_fill_raw_events_cache(&self) -> Result<()> {
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            "Pre-filling raw events cache..."
+        );
+
+        let raw_events = self.database.get_all_raw_events().await?;
+        self.cache
+            .set(&CacheKey::AllRawEvents, raw_events, 120)
+            .await;
+
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            "✅ Raw events cache pre-filled"
+        );
+
+        Ok(())
+    }
+
+    /// Pre-fill mint info cache
+    async fn pre_fill_mint_info_cache(&self) -> Result<()> {
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            "Pre-filling mint info cache..."
+        );
+
+        let mint_info = self.database.get_all_stored_mint_info().await?;
+        self.cache.set(&CacheKey::AllMintInfo, mint_info, 600).await;
+
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            "✅ Mint info cache pre-filled"
+        );
+
+        Ok(())
+    }
+
+    /// Pre-fill health summaries cache
+    async fn pre_fill_health_summaries_cache(&self) -> Result<()> {
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            "Pre-filling health summaries cache..."
+        );
+
+        let health_summaries = self.database.get_all_mint_health_summaries().await?;
+        self.cache
+            .set(&CacheKey::AllHealthSummaries, health_summaries, 120)
+            .await;
+
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            "✅ Health summaries cache pre-filled"
+        );
+
+        Ok(())
+    }
+
+    /// Proactively refresh cache entries when data changes
+    pub async fn refresh_cache_on_event(&self, event_kind: u16) -> Result<()> {
+        tracing::debug!(
+            target: "bitcoinmints_retyr::cached_database",
+            event_kind = event_kind,
+            "🔄 Proactively refreshing cache due to new event"
+        );
+
+        match event_kind {
+            CASHU_MINT_KIND | FEDIMINT_KIND => {
+                // Refresh mint-related caches in parallel
+                let results = tokio::join!(
+                    self.pre_fill_mints_cache(),
+                    self.pre_fill_raw_events_cache()
+                );
+
+                if let Err(e) = results.0 {
+                    tracing::warn!(
+                        target: "bitcoinmints_retyr::cached_database",
+                        error = %e,
+                        "Failed to refresh mints cache"
+                    );
+                }
+                if let Err(e) = results.1 {
+                    tracing::warn!(
+                        target: "bitcoinmints_retyr::cached_database",
+                        error = %e,
+                        "Failed to refresh raw events cache"
+                    );
+                }
+            }
+            RECOMMENDATION_KIND => {
+                // Refresh recommendation and mint caches in parallel
+                let results = tokio::join!(
+                    self.pre_fill_recommendations_cache(),
+                    self.pre_fill_mints_cache(),
+                    self.pre_fill_raw_events_cache()
+                );
+
+                if let Err(e) = results.0 {
+                    tracing::warn!(
+                        target: "bitcoinmints_retyr::cached_database",
+                        error = %e,
+                        "Failed to refresh recommendations cache"
+                    );
+                }
+                if let Err(e) = results.1 {
+                    tracing::warn!(
+                        target: "bitcoinmints_retyr::cached_database",
+                        error = %e,
+                        "Failed to refresh mints cache"
+                    );
+                }
+                if let Err(e) = results.2 {
+                    tracing::warn!(
+                        target: "bitcoinmints_retyr::cached_database",
+                        error = %e,
+                        "Failed to refresh raw events cache"
+                    );
+                }
+            }
+            USER_METADATA_KIND => {
+                // Refresh user-related caches
+                let results = tokio::join!(
+                    self.pre_fill_users_cache(),
+                    self.pre_fill_raw_events_cache()
+                );
+
+                if let Err(e) = results.0 {
+                    tracing::warn!(
+                        target: "bitcoinmints_retyr::cached_database",
+                        error = %e,
+                        "Failed to refresh users cache"
+                    );
+                }
+                if let Err(e) = results.1 {
+                    tracing::warn!(
+                        target: "bitcoinmints_retyr::cached_database",
+                        error = %e,
+                        "Failed to refresh raw events cache"
+                    );
+                }
+            }
+            _ => {
+                // For other event types, just refresh raw events
+                if let Err(e) = self.pre_fill_raw_events_cache().await {
+                    tracing::warn!(
+                        target: "bitcoinmints_retyr::cached_database",
+                        error = %e,
+                        "Failed to refresh raw events cache"
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Start background task for periodic cache refresh
+    pub fn start_cache_refresh_task(&self) -> tokio::task::JoinHandle<()> {
+        let cached_database = self.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30)); // Check every 30 seconds
+
+            loop {
+                interval.tick().await;
+
+                tracing::debug!(
+                    target: "bitcoinmints_retyr::cached_database",
+                    "🔄 Running periodic cache refresh"
+                );
+
+                // Refresh all main caches periodically to ensure they stay warm
+                if let Err(e) = cached_database.pre_fill_cache().await {
+                    tracing::warn!(
+                        target: "bitcoinmints_retyr::cached_database",
+                        error = %e,
+                        "Failed to refresh cache during periodic task"
+                    );
+                }
+            }
+        })
+    }
+
     /// Get the underlying database (for operations that don't need caching)
     pub fn database(&self) -> &Database {
         &self.database
@@ -68,8 +381,8 @@ impl CachedDatabase {
             .get_mints_with_recommendations(mint_type)
             .await?;
 
-        // Cache the result (5 minutes TTL for mint data)
-        self.cache.set(&cache_key, data.clone(), 300).await;
+        // Cache the result (2 minutes TTL for mint data)
+        self.cache.set(&cache_key, data.clone(), 120).await;
 
         Ok(data)
     }
@@ -104,13 +417,19 @@ impl CachedDatabase {
             "🔄 Fetching mints with info from database"
         );
 
-        let data = self
+        let mut data = self
             .database
             .get_mints_with_recommendations_and_info(query_params)
             .await?;
 
-        // Cache the result (3 minutes TTL for query-specific data)
-        self.cache.set(&cache_key, data.clone(), 180).await;
+        // Enrich with fedimint federation information
+        data = self
+            .database
+            .enrich_mints_with_federation_info(data)
+            .await?;
+
+        // Cache the result (2 minutes TTL for query-specific data)
+        self.cache.set(&cache_key, data.clone(), 120).await;
 
         Ok(data)
     }
@@ -171,8 +490,8 @@ impl CachedDatabase {
 
         let data = self.database.get_all_recommendations().await?;
 
-        // Cache the result (5 minutes TTL for recommendation data)
-        self.cache.set(&cache_key, data.clone(), 300).await;
+        // Cache the result (2 minutes TTL for recommendation data)
+        self.cache.set(&cache_key, data.clone(), 120).await;
 
         Ok(data)
     }
@@ -285,8 +604,8 @@ impl CachedDatabase {
 
         let data = self.database.get_mint_statistics().await?;
 
-        // Cache the result (5 minutes TTL for statistics)
-        self.cache.set(&cache_key, data.clone(), 300).await;
+        // Cache the result (2 minutes TTL for statistics)
+        self.cache.set(&cache_key, data.clone(), 120).await;
 
         Ok(data)
     }
@@ -397,20 +716,29 @@ impl CachedDatabase {
 
     // ===== WRITE OPERATIONS (with cache invalidation) =====
 
-    /// Store raw event and invalidate related caches
+    /// Store raw event and proactively refresh related caches
     pub async fn store_raw_event(&self, event: &nostr_sdk::Event) -> Result<()> {
         // Store in database first
         self.database.store_raw_event(event).await?;
 
-        // Invalidate related caches based on event kind
-        self.cache
-            .invalidate_on_new_event(event.kind.as_u16())
-            .await;
+        // Proactively refresh related caches based on event kind
+        if let Err(e) = self.refresh_cache_on_event(event.kind.as_u16()).await {
+            tracing::warn!(
+                target: "bitcoinmints_retyr::cached_database",
+                error = %e,
+                event_kind = event.kind.as_u16(),
+                "Failed to refresh cache after storing event, falling back to invalidation"
+            );
+            // Fall back to invalidation if refresh fails
+            self.cache
+                .invalidate_on_new_event(event.kind.as_u16())
+                .await;
+        }
 
         Ok(())
     }
 
-    /// Store mint info and invalidate related caches
+    /// Store mint info and proactively refresh related caches
     pub async fn store_mint_info(
         &self,
         mint_url: &str,
@@ -422,19 +750,47 @@ impl CachedDatabase {
             .store_mint_info(mint_url, mint_info_json, error)
             .await?;
 
-        // Invalidate mint info caches
-        self.cache
-            .invalidate_many(&[
-                CacheKey::AllMintInfo,
-                CacheKey::AllHealthSummaries,
-                CacheKey::MintHealthSummary(mint_url.to_string()),
-            ])
-            .await;
+        // Proactively refresh mint info and health caches
+        let refresh_results = tokio::join!(
+            self.pre_fill_mint_info_cache(),
+            self.pre_fill_health_summaries_cache()
+        );
+
+        let mut mint_info_failed = false;
+        let mut health_summaries_failed = false;
+
+        if let Err(e) = refresh_results.0 {
+            tracing::warn!(
+                target: "bitcoinmints_retyr::cached_database",
+                error = %e,
+                "Failed to refresh mint info cache, falling back to invalidation"
+            );
+            mint_info_failed = true;
+        }
+        if let Err(e) = refresh_results.1 {
+            tracing::warn!(
+                target: "bitcoinmints_retyr::cached_database",
+                error = %e,
+                "Failed to refresh health summaries cache, falling back to invalidation"
+            );
+            health_summaries_failed = true;
+        }
+
+        // If refresh failed, fall back to invalidation
+        if mint_info_failed || health_summaries_failed {
+            self.cache
+                .invalidate_many(&[
+                    CacheKey::AllMintInfo,
+                    CacheKey::AllHealthSummaries,
+                    CacheKey::MintHealthSummary(mint_url.to_string()),
+                ])
+                .await;
+        }
 
         Ok(())
     }
 
-    /// Store health record and invalidate health caches
+    /// Store health record and proactively refresh health caches
     pub async fn store_health_record(
         &self,
         mint_url: &str,
@@ -454,13 +810,21 @@ impl CachedDatabase {
             )
             .await?;
 
-        // Invalidate health-related caches
-        self.cache
-            .invalidate_many(&[
-                CacheKey::AllHealthSummaries,
-                CacheKey::MintHealthSummary(mint_url.to_string()),
-            ])
-            .await;
+        // Proactively refresh health caches
+        if let Err(e) = self.pre_fill_health_summaries_cache().await {
+            tracing::warn!(
+                target: "bitcoinmints_retyr::cached_database",
+                error = %e,
+                "Failed to refresh health summaries cache, falling back to invalidation"
+            );
+            // Fall back to invalidation if refresh fails
+            self.cache
+                .invalidate_many(&[
+                    CacheKey::AllHealthSummaries,
+                    CacheKey::MintHealthSummary(mint_url.to_string()),
+                ])
+                .await;
+        }
 
         Ok(())
     }
@@ -472,18 +836,26 @@ impl CachedDatabase {
         self.database.event_exists(event_id).await
     }
 
-    /// Cleanup duplicate mints (invalidates caches)
+    /// Cleanup duplicate mints (refreshes caches)
     pub async fn cleanup_duplicate_mints(&self) -> Result<()> {
         let result = self.database.cleanup_duplicate_mints().await;
 
-        // Clear all mint-related caches after cleanup
-        self.cache
-            .invalidate_many(&[
-                CacheKey::AllMints,
-                CacheKey::CashuMints,
-                CacheKey::FedimintMints,
-            ])
-            .await;
+        // Proactively refresh mint-related caches after cleanup
+        if let Err(e) = self.pre_fill_mints_cache().await {
+            tracing::warn!(
+                target: "bitcoinmints_retyr::cached_database",
+                error = %e,
+                "Failed to refresh mints cache after cleanup, falling back to invalidation"
+            );
+            // Fall back to invalidation if refresh fails
+            self.cache
+                .invalidate_many(&[
+                    CacheKey::AllMints,
+                    CacheKey::CashuMints,
+                    CacheKey::FedimintMints,
+                ])
+                .await;
+        }
 
         result
     }

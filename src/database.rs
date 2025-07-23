@@ -155,6 +155,69 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Create federation_info table for fedimint federations (federation_id as primary key)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS federation_info (
+                id TEXT PRIMARY KEY,
+                federation_id TEXT NOT NULL UNIQUE,
+                config_json TEXT NOT NULL,
+                guardians_count INTEGER NOT NULL,
+                modules TEXT NOT NULL,
+                federation_name TEXT,
+                welcome_message TEXT,
+                last_fetched_at TEXT NOT NULL,
+                fetch_success BOOLEAN NOT NULL,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                consecutive_failures INTEGER DEFAULT 0,
+                consecutive_successes INTEGER DEFAULT 0,
+                total_attempts INTEGER DEFAULT 0,
+                total_successes INTEGER DEFAULT 0,
+                first_seen_at TEXT,
+                health_score REAL DEFAULT 1.0,
+                is_currently_online BOOLEAN DEFAULT TRUE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create federation_invite_codes table to map invite codes to federation IDs
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS federation_invite_codes (
+                id TEXT PRIMARY KEY,
+                invite_code TEXT NOT NULL UNIQUE,
+                federation_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (federation_id) REFERENCES federation_info (federation_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create indexes for federation tables
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_federation_info_id ON federation_info (federation_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_federation_info_fetched ON federation_info (last_fetched_at)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_federation_invite_codes_code ON federation_invite_codes (invite_code)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_federation_invite_codes_fed_id ON federation_invite_codes (federation_id)")
+            .execute(&self.pool)
+            .await?;
+
         info!(
             target: "bitcoinmints_retyr::database",
             "✅ Database migrations completed"
@@ -306,8 +369,27 @@ impl Database {
             });
         }
 
-        // Sort by name for consistent output
-        mints_with_recommendations.sort_by(|a, b| a.mint.name.cmp(&b.mint.name));
+        // Sort by average rating (highest to lowest), then by total recommendations, then by name
+        mints_with_recommendations.sort_by(|a, b| {
+            // First priority: average rating (descending - highest to lowest)
+            match (a.average_rating, b.average_rating) {
+                (Some(a_rating), Some(b_rating)) => b_rating
+                    .partial_cmp(&a_rating)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+                (Some(_), None) => std::cmp::Ordering::Less, // Rated items come first
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => {
+                    // Second priority: total recommendations (descending)
+                    match b.total_recommendations.cmp(&a.total_recommendations) {
+                        std::cmp::Ordering::Equal => {
+                            // Third priority: name (ascending) for consistent output
+                            a.mint.name.cmp(&b.mint.name)
+                        }
+                        other => other,
+                    }
+                }
+            }
+        });
 
         Ok(mints_with_recommendations)
     }
@@ -333,28 +415,25 @@ impl Database {
                 let mut passes_filter = true;
 
                 // Check minting currencies filter
-                if let Some(minting_currencies_str) = &query_params.minting {
-                    let required_minting_currencies: Vec<&str> = minting_currencies_str
+                if let Some(minting_str) = &query_params.minting {
+                    let required_currencies: Vec<&str> = minting_str
                         .split(',')
                         .map(|s| s.trim())
                         .filter(|s| !s.is_empty())
                         .collect();
 
-                    if !required_minting_currencies.is_empty() {
-                        let supported_minting_currencies: Vec<String> = mint_with_recs
-                            .mint
-                            .nuts
-                            .nut04
-                            .methods
-                            .iter()
-                            .map(|method| format!("{:?}", method.unit).to_lowercase())
-                            .collect();
-
-                        // Check if all required minting currencies are supported
-                        for required_currency in required_minting_currencies {
-                            if !supported_minting_currencies
-                                .contains(&required_currency.to_lowercase())
-                            {
+                    if !required_currencies.is_empty() {
+                        // Check if all required currencies support minting
+                        for required_currency in required_currencies {
+                            let mut currency_supported = false;
+                            for method in &mint_with_recs.mint.nuts.nut04.methods {
+                                let unit_str = format!("{:?}", method.unit).to_lowercase();
+                                if unit_str == required_currency.to_lowercase() {
+                                    currency_supported = true;
+                                    break;
+                                }
+                            }
+                            if !currency_supported {
                                 passes_filter = false;
                                 break;
                             }
@@ -362,30 +441,26 @@ impl Database {
                     }
                 }
 
-                // Check melting currencies filter
                 if passes_filter {
-                    if let Some(melting_currencies_str) = &query_params.melting {
-                        let required_melting_currencies: Vec<&str> = melting_currencies_str
+                    if let Some(melting_str) = &query_params.melting {
+                        let required_currencies: Vec<&str> = melting_str
                             .split(',')
                             .map(|s| s.trim())
                             .filter(|s| !s.is_empty())
                             .collect();
 
-                        if !required_melting_currencies.is_empty() {
-                            let supported_melting_currencies: Vec<String> = mint_with_recs
-                                .mint
-                                .nuts
-                                .nut05
-                                .methods
-                                .iter()
-                                .map(|method| format!("{:?}", method.unit).to_lowercase())
-                                .collect();
-
-                            // Check if all required melting currencies are supported
-                            for required_currency in required_melting_currencies {
-                                if !supported_melting_currencies
-                                    .contains(&required_currency.to_lowercase())
-                                {
+                        if !required_currencies.is_empty() {
+                            // Check if all required currencies support melting
+                            for required_currency in required_currencies {
+                                let mut currency_supported = false;
+                                for method in &mint_with_recs.mint.nuts.nut05.methods {
+                                    let unit_str = format!("{:?}", method.unit).to_lowercase();
+                                    if unit_str == required_currency.to_lowercase() {
+                                        currency_supported = true;
+                                        break;
+                                    }
+                                }
+                                if !currency_supported {
                                     passes_filter = false;
                                     break;
                                 }
@@ -394,7 +469,6 @@ impl Database {
                     }
                 }
 
-                // Check NUT filters
                 if passes_filter {
                     if let Some(nuts_str) = &query_params.nuts {
                         let required_nuts: Vec<&str> = nuts_str
@@ -413,6 +487,41 @@ impl Database {
                                     passes_filter = false;
                                     break;
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // Skip this mint if it doesn't pass the filters
+                if !passes_filter {
+                    continue;
+                }
+            }
+
+            // Apply Fedimint module filters if specified
+            if query_params.mint_type.as_deref() == Some("fedimint")
+                && query_params.modules.is_some()
+            {
+                let mut passes_filter = true;
+
+                // Check module filters
+                if let Some(modules_str) = &query_params.modules {
+                    let required_modules: Vec<&str> = modules_str
+                        .split(',')
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+
+                    if !required_modules.is_empty() {
+                        // Check if all required modules are supported
+                        for required_module in required_modules {
+                            if !mint_with_recs
+                                .mint
+                                .modules
+                                .contains(&required_module.to_string())
+                            {
+                                passes_filter = false;
+                                break;
                             }
                         }
                     }
@@ -454,6 +563,141 @@ impl Database {
         }
 
         Ok(mints_with_info)
+    }
+
+    /// Enrich mints with fedimint federation information and group by federation_id
+    pub async fn enrich_mints_with_federation_info(
+        &self,
+        mints: Vec<MintWithRecommendationsAndInfo>,
+    ) -> Result<Vec<MintWithRecommendationsAndInfo>> {
+        // First enrich all mints with federation info
+        let mut enriched_mints = Vec::new();
+        let mut fedimint_federations: std::collections::HashMap<
+            String,
+            MintWithRecommendationsAndInfo,
+        > = std::collections::HashMap::new();
+
+        for mut mint_with_recs in mints {
+            if mint_with_recs.mint.mint_type == "fedimint" {
+                // Store mint info for potential warning message
+                let mint_name = mint_with_recs.mint.name.clone();
+                let invite_codes = mint_with_recs.mint.invite_codes.clone();
+
+                // Try to get federation info for this mint's invite codes
+                let mut matched_federation_id: Option<String> = None;
+
+                for invite_code in &mint_with_recs.mint.invite_codes.clone() {
+                    // Get federation_id for this invite code
+                    if let Ok(Some(federation_id)) =
+                        self.get_federation_id_for_invite_code(invite_code).await
+                    {
+                        // Get federation info by federation_id
+                        if let Ok(Some(federation_info)) =
+                            self.get_stored_federation_info(&federation_id).await
+                        {
+                            if federation_info.fetch_success
+                                && !federation_info.config_json.is_empty()
+                            {
+                                // Try to parse as fedimint client config
+                                if let Ok(_client_config) =
+                                    serde_json::from_str::<fedimint_core::config::ClientConfig>(
+                                        &federation_info.config_json,
+                                    )
+                                {
+                                    // Get all invite codes for this federation
+                                    let all_invite_codes = self
+                                        .get_invite_codes_for_federation(&federation_id)
+                                        .await
+                                        .unwrap_or_default();
+
+                                    // Extract metadata
+                                    let mut meta = std::collections::HashMap::new();
+                                    if let Some(federation_name) = &federation_info.federation_name
+                                    {
+                                        meta.insert(
+                                            "federation_name".to_string(),
+                                            serde_json::Value::String(federation_name.clone()),
+                                        );
+                                    }
+                                    if let Some(welcome_message) = &federation_info.welcome_message
+                                    {
+                                        meta.insert(
+                                            "welcome_message".to_string(),
+                                            serde_json::Value::String(welcome_message.clone()),
+                                        );
+                                    }
+
+                                    // Update the mint with federation info
+                                    mint_with_recs.mint.federation_id = Some(federation_id.clone());
+                                    mint_with_recs.mint.guardians_count =
+                                        Some(federation_info.guardians_count);
+                                    mint_with_recs.mint.meta = meta;
+                                    mint_with_recs.mint.modules = federation_info.modules.clone();
+
+                                    // Use federation name as mint name if available
+                                    if let Some(federation_name) = &federation_info.federation_name
+                                    {
+                                        mint_with_recs.mint.name = federation_name.clone();
+                                    }
+
+                                    // Update the mint's invite codes to include all codes for this federation
+                                    mint_with_recs.mint.invite_codes = all_invite_codes;
+
+                                    matched_federation_id = Some(federation_id);
+                                    break; // Found federation info, no need to check other invite codes
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let Some(federation_id) = matched_federation_id {
+                    // Check if we already have this federation
+                    if let Some(existing_federation) = fedimint_federations.get_mut(&federation_id)
+                    {
+                        // Merge recommendations and recalculate stats
+                        existing_federation
+                            .recommendations
+                            .extend(mint_with_recs.recommendations);
+                        existing_federation.total_recommendations +=
+                            mint_with_recs.total_recommendations;
+
+                        // Recalculate average rating
+                        let ratings: Vec<i32> = existing_federation
+                            .recommendations
+                            .iter()
+                            .filter_map(|r| r.recommendation.rating)
+                            .collect();
+                        existing_federation.average_rating = if !ratings.is_empty() {
+                            let sum: i32 = ratings.iter().sum();
+                            Some(sum as f64 / ratings.len() as f64)
+                        } else {
+                            None
+                        };
+                    } else {
+                        // First time seeing this federation
+                        fedimint_federations.insert(federation_id, mint_with_recs);
+                    }
+                } else {
+                    warn!(
+                        target: "bitcoinmints_retyr::database",
+                        mint_name = %mint_name,
+                        invite_codes = ?invite_codes,
+                        "⚠️ No federation info found for fedimint mint - treating as individual mint"
+                    );
+                    // If no federation info found, keep as individual mint
+                    enriched_mints.push(mint_with_recs);
+                }
+            } else {
+                // For non-fedimint mints (e.g., cashu), add directly
+                enriched_mints.push(mint_with_recs);
+            }
+        }
+
+        // Add all grouped federations
+        enriched_mints.extend(fedimint_federations.into_values());
+
+        Ok(enriched_mints)
     }
 
     /// Get user profiles with their activity
@@ -797,6 +1041,9 @@ impl Database {
             invite_codes,
             nuts,
             modules,
+            federation_id: None,   // Will be populated by fedimint service
+            guardians_count: None, // Will be populated by fedimint service
+            meta: std::collections::HashMap::new(), // Will be populated by fedimint service
             created_at: row.get::<i64, _>("created_at") as u64,
             received_at: chrono::DateTime::parse_from_rfc3339(
                 &row.get::<String, _>("received_at"),
@@ -1488,18 +1735,13 @@ impl Database {
 
     /// Cleanup old health records to prevent database bloat (keep last 30 days)
     pub async fn cleanup_old_health_records(&self) -> Result<()> {
-        let cutoff = Utc::now() - chrono::Duration::days(30);
+        let cutoff_date = Utc::now() - chrono::Duration::days(30);
 
-        let deleted_count = sqlx::query(
-            r#"
-            DELETE FROM health_records 
-            WHERE checked_at < ?
-            "#,
-        )
-        .bind(cutoff.to_rfc3339())
-        .execute(&self.pool)
-        .await?
-        .rows_affected();
+        let deleted_count = sqlx::query("DELETE FROM health_records WHERE checked_at < ?")
+            .bind(cutoff_date.to_rfc3339())
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
 
         if deleted_count > 0 {
             info!(
@@ -1510,5 +1752,306 @@ impl Database {
         }
 
         Ok(())
+    }
+
+    // ===== FEDIMINT FEDERATION METHODS =====
+
+    /// Store fedimint federation information with federation_id as primary key
+    pub async fn store_federation_info(
+        &self,
+        federation_id: &str,
+        config_json: &str,
+        guardians_count: usize,
+        modules: &[String],
+        federation_name: Option<&str>,
+        welcome_message: Option<&str>,
+        invite_codes: &[String],
+        error: Option<&str>,
+    ) -> Result<()> {
+        let now = Utc::now();
+        let success = error.is_none();
+        let modules_json = serde_json::to_string(modules)?;
+
+        // Get existing record to update health counters
+        let existing = self.get_stored_federation_info(federation_id).await?;
+
+        let (
+            consecutive_failures,
+            consecutive_successes,
+            total_attempts,
+            total_successes,
+            first_seen_at,
+            health_score,
+        ) = if let Some(existing_info) = existing {
+            let new_total_attempts = existing_info.total_attempts + 1;
+            let new_total_successes = if success {
+                existing_info.total_successes + 1
+            } else {
+                existing_info.total_successes
+            };
+
+            let (new_consecutive_failures, new_consecutive_successes) = if success {
+                (0, existing_info.consecutive_successes + 1)
+            } else {
+                (existing_info.consecutive_failures + 1, 0)
+            };
+
+            // Calculate health score based on recent success rate
+            let new_health_score = if new_total_attempts > 0 {
+                new_total_successes as f64 / new_total_attempts as f64
+            } else {
+                1.0
+            };
+
+            (
+                new_consecutive_failures,
+                new_consecutive_successes,
+                new_total_attempts,
+                new_total_successes,
+                existing_info.first_seen_at,
+                new_health_score,
+            )
+        } else {
+            // First time seeing this federation
+            let initial_successes = if success { 1 } else { 0 };
+            let initial_failures = if success { 0 } else { 1 };
+            let initial_health_score = if success { 1.0 } else { 0.0 };
+
+            (
+                initial_failures,
+                initial_successes,
+                1,
+                initial_successes,
+                now,
+                initial_health_score,
+            )
+        };
+
+        let id = Uuid::new_v4().to_string();
+
+        // Store or update federation info
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO federation_info 
+            (id, federation_id, config_json, guardians_count, modules, federation_name, welcome_message,
+             last_fetched_at, fetch_success, error_message, created_at, updated_at,
+             consecutive_failures, consecutive_successes, total_attempts, total_successes, 
+             first_seen_at, health_score, is_currently_online)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&id)
+        .bind(federation_id)
+        .bind(config_json)
+        .bind(guardians_count as i64)
+        .bind(&modules_json)
+        .bind(federation_name)
+        .bind(welcome_message)
+        .bind(now.to_rfc3339())
+        .bind(success)
+        .bind(error)
+        .bind(now.to_rfc3339())
+        .bind(now.to_rfc3339())
+        .bind(consecutive_failures)
+        .bind(consecutive_successes)
+        .bind(total_attempts)
+        .bind(total_successes)
+        .bind(first_seen_at.to_rfc3339())
+        .bind(health_score)
+        .bind(success)
+        .execute(&self.pool)
+        .await?;
+
+        // Store invite code mappings
+        for invite_code in invite_codes {
+            let mapping_id = Uuid::new_v4().to_string();
+            sqlx::query(
+                r#"
+                INSERT OR REPLACE INTO federation_invite_codes 
+                (id, invite_code, federation_id, created_at)
+                VALUES (?, ?, ?, ?)
+                "#,
+            )
+            .bind(&mapping_id)
+            .bind(invite_code)
+            .bind(federation_id)
+            .bind(now.to_rfc3339())
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Get stored federation info by federation_id
+    pub async fn get_stored_federation_info(
+        &self,
+        federation_id: &str,
+    ) -> Result<Option<crate::models::StoredFederationInfo>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, federation_id, config_json, guardians_count, modules, federation_name, welcome_message,
+                   last_fetched_at, fetch_success, error_message, created_at, updated_at,
+                   consecutive_failures, consecutive_successes, total_attempts, total_successes, 
+                   first_seen_at, health_score, is_currently_online
+            FROM federation_info
+            WHERE federation_id = ?
+            "#,
+        )
+        .bind(federation_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let modules_json: String = row.get("modules");
+            let modules: Vec<String> = serde_json::from_str(&modules_json).unwrap_or_default();
+
+            Ok(Some(crate::models::StoredFederationInfo {
+                id: row.get("id"),
+                federation_id: row.get("federation_id"),
+                config_json: row.get("config_json"),
+                guardians_count: row.get::<i64, _>("guardians_count") as usize,
+                modules,
+                federation_name: row.get("federation_name"),
+                welcome_message: row.get("welcome_message"),
+                last_fetched_at: chrono::DateTime::parse_from_rfc3339(
+                    &row.get::<String, _>("last_fetched_at"),
+                )?
+                .into(),
+                fetch_success: row.get("fetch_success"),
+                error_message: row.get("error_message"),
+                created_at: chrono::DateTime::parse_from_rfc3339(
+                    &row.get::<String, _>("created_at"),
+                )?
+                .into(),
+                updated_at: chrono::DateTime::parse_from_rfc3339(
+                    &row.get::<String, _>("updated_at"),
+                )?
+                .into(),
+                consecutive_failures: row
+                    .get::<Option<i32>, _>("consecutive_failures")
+                    .unwrap_or(0),
+                consecutive_successes: row
+                    .get::<Option<i32>, _>("consecutive_successes")
+                    .unwrap_or(0),
+                total_attempts: row.get::<Option<i32>, _>("total_attempts").unwrap_or(0),
+                total_successes: row.get::<Option<i32>, _>("total_successes").unwrap_or(0),
+                first_seen_at: chrono::DateTime::parse_from_rfc3339(
+                    &row.get::<Option<String>, _>("first_seen_at")
+                        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+                )?
+                .into(),
+                health_score: row.get::<Option<f64>, _>("health_score").unwrap_or(1.0),
+                is_currently_online: row
+                    .get::<Option<bool>, _>("is_currently_online")
+                    .unwrap_or(true),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get federation_id for an invite code
+    pub async fn get_federation_id_for_invite_code(
+        &self,
+        invite_code: &str,
+    ) -> Result<Option<String>> {
+        let row =
+            sqlx::query("SELECT federation_id FROM federation_invite_codes WHERE invite_code = ?")
+                .bind(invite_code)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        if let Some(row) = row {
+            Ok(Some(row.get("federation_id")))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get all invite codes for a federation_id
+    pub async fn get_invite_codes_for_federation(
+        &self,
+        federation_id: &str,
+    ) -> Result<Vec<String>> {
+        let rows =
+            sqlx::query("SELECT invite_code FROM federation_invite_codes WHERE federation_id = ?")
+                .bind(federation_id)
+                .fetch_all(&self.pool)
+                .await?;
+
+        let mut invite_codes = Vec::new();
+        for row in rows {
+            invite_codes.push(row.get("invite_code"));
+        }
+
+        Ok(invite_codes)
+    }
+
+    /// Get all stored federation info
+    pub async fn get_all_stored_federation_info(
+        &self,
+    ) -> Result<Vec<crate::models::StoredFederationInfo>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, federation_id, config_json, guardians_count, modules, federation_name, welcome_message,
+                   last_fetched_at, fetch_success, error_message, created_at, updated_at,
+                   consecutive_failures, consecutive_successes, total_attempts, total_successes, 
+                   first_seen_at, health_score, is_currently_online
+            FROM federation_info
+            ORDER BY last_fetched_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut stored_infos = Vec::new();
+        for row in rows {
+            let modules_json: String = row.get("modules");
+            let modules: Vec<String> = serde_json::from_str(&modules_json).unwrap_or_default();
+
+            stored_infos.push(crate::models::StoredFederationInfo {
+                id: row.get("id"),
+                federation_id: row.get("federation_id"),
+                config_json: row.get("config_json"),
+                guardians_count: row.get::<i64, _>("guardians_count") as usize,
+                modules,
+                federation_name: row.get("federation_name"),
+                welcome_message: row.get("welcome_message"),
+                last_fetched_at: chrono::DateTime::parse_from_rfc3339(
+                    &row.get::<String, _>("last_fetched_at"),
+                )?
+                .into(),
+                fetch_success: row.get("fetch_success"),
+                error_message: row.get("error_message"),
+                created_at: chrono::DateTime::parse_from_rfc3339(
+                    &row.get::<String, _>("created_at"),
+                )?
+                .into(),
+                updated_at: chrono::DateTime::parse_from_rfc3339(
+                    &row.get::<String, _>("updated_at"),
+                )?
+                .into(),
+                consecutive_failures: row
+                    .get::<Option<i32>, _>("consecutive_failures")
+                    .unwrap_or(0),
+                consecutive_successes: row
+                    .get::<Option<i32>, _>("consecutive_successes")
+                    .unwrap_or(0),
+                total_attempts: row.get::<Option<i32>, _>("total_attempts").unwrap_or(0),
+                total_successes: row.get::<Option<i32>, _>("total_successes").unwrap_or(0),
+                first_seen_at: chrono::DateTime::parse_from_rfc3339(
+                    &row.get::<Option<String>, _>("first_seen_at")
+                        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+                )?
+                .into(),
+                health_score: row.get::<Option<f64>, _>("health_score").unwrap_or(1.0),
+                is_currently_online: row
+                    .get::<Option<bool>, _>("is_currently_online")
+                    .unwrap_or(true),
+            });
+        }
+
+        Ok(stored_infos)
     }
 }

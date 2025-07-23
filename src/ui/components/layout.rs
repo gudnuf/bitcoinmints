@@ -41,6 +41,7 @@ pub fn render_layout(title: &str, tagline: &str, active_page: &str, content: Mar
                 title { (title) }
                 link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet";
                 style { (get_shared_styles()) }
+                script src="/assets/js/mints.js" defer {}
             }
             body {
                 div class="dashboard-container" {

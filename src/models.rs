@@ -29,8 +29,11 @@ pub struct Mint {
     pub mint_type: String, // "cashu" or "fedimint"
     pub networks: Vec<String>,
     pub invite_codes: Vec<String>,
-    pub nuts: cdk::nuts::Nuts, // CDK nuts structure for Cashu
-    pub modules: Vec<String>,  // For Fedimint
+    pub nuts: cdk::nuts::Nuts,          // CDK nuts structure for Cashu
+    pub modules: Vec<String>,           // For Fedimint
+    pub federation_id: Option<String>,  // For Fedimint: the calculated federation ID
+    pub guardians_count: Option<usize>, // For Fedimint: number of guardians
+    pub meta: std::collections::HashMap<String, serde_json::Value>, // For Fedimint metadata
     pub created_at: u64,
     pub received_at: DateTime<Utc>,
 }
@@ -152,6 +155,31 @@ pub struct StoredMintInfo {
     pub is_currently_online: bool,
 }
 
+/// Database representation of stored federation info (fedimint-specific)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredFederationInfo {
+    pub id: String,
+    pub federation_id: String, // Primary key for federation
+    pub config_json: String,   // Serialized ClientConfig JSON
+    pub guardians_count: usize,
+    pub modules: Vec<String>,
+    pub federation_name: Option<String>,
+    pub welcome_message: Option<String>,
+    pub last_fetched_at: DateTime<Utc>,
+    pub fetch_success: bool,
+    pub error_message: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    // Health tracking fields
+    pub consecutive_failures: i32,
+    pub consecutive_successes: i32,
+    pub total_attempts: i32,
+    pub total_successes: i32,
+    pub first_seen_at: DateTime<Utc>,
+    pub health_score: f64, // 0.0 to 1.0 representing uptime percentage
+    pub is_currently_online: bool,
+}
+
 /// Individual health check record for detailed history tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MintHealthRecord {
@@ -190,6 +218,8 @@ pub struct MintQueryParams {
     pub melting: Option<String>,
     /// Comma-separated list of NUT protocols that must be supported (only for Cashu mints)
     pub nuts: Option<String>,
+    /// Comma-separated list of module IDs that must be supported (only for Fedimint mints)
+    pub modules: Option<String>,
 }
 
 /// Cache key types for different cached data
