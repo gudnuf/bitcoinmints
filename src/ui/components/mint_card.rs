@@ -10,6 +10,14 @@ pub struct CurrencyCapability {
     pub can_melt: bool,
 }
 
+/// NUT capability information
+#[derive(Debug, Clone)]
+pub struct NutCapability {
+    pub nut_number: String,
+    pub description: String,
+    pub is_supported: bool,
+}
+
 /// Extract all currency capabilities from a list of mints
 pub fn extract_currency_capabilities(
     mints: &[MintWithRecommendationsAndInfo],
@@ -54,43 +62,128 @@ pub fn extract_currency_capabilities(
     result
 }
 
-/// Render Cashu-specific currency filters
-pub fn render_cashu_filters(capabilities: &[CurrencyCapability]) -> Markup {
+/// Extract all NUT capabilities from a list of mints
+pub fn extract_nut_capabilities(mints: &[MintWithRecommendationsAndInfo]) -> Vec<NutCapability> {
+    let mut nuts: HashMap<String, bool> = HashMap::new();
+
+    // Define NUT descriptions
+    let nut_descriptions: HashMap<&str, &str> = [
+        ("04", "Minting tokens"),
+        ("05", "Melting tokens"),
+        ("07", "Token state check"),
+        ("08", "Overpaid fees"),
+        ("09", "Restore signatures"),
+        ("10", "Spending conditions"),
+        ("11", "Pay-to-Public-Key-Hash"),
+        ("12", "DLEQ proofs"),
+        ("14", "Hashed Time Locked Contracts"),
+        ("15", "Partial multi-path payments"),
+        ("17", "WebSocket subscriptions"),
+        ("19", "Cached endpoints"),
+        ("20", "Faster payments"),
+        ("21", "Authentication"),
+        ("22", "Multi-party payments"),
+    ]
+    .iter()
+    .cloned()
+    .collect();
+
+    for mint in mints {
+        // Only process Cashu mints
+        if mint.mint.mint_type.to_lowercase() != "cashu" {
+            continue;
+        }
+
+        let supported_nuts = get_supported_nuts(&mint.mint.nuts);
+        for nut in supported_nuts {
+            nuts.insert(nut, true);
+        }
+    }
+
+    let mut result: Vec<NutCapability> = nuts
+        .into_iter()
+        .map(|(nut_number, _)| NutCapability {
+            description: nut_descriptions
+                .get(nut_number.as_str())
+                .unwrap_or(&"Unknown protocol")
+                .to_string(),
+            nut_number,
+            is_supported: true,
+        })
+        .collect();
+
+    result.sort_by(|a, b| a.nut_number.cmp(&b.nut_number));
+    result
+}
+
+/// Render Cashu-specific currency and NUT filters
+pub fn render_cashu_filters(
+    capabilities: &[CurrencyCapability],
+    nut_capabilities: &[NutCapability],
+) -> Markup {
     html! {
         div class="cashu-filters" id="cashu-filters" {
-            div class="cashu-filter-title" {
-                span { "🟠" }
-                span { "Cashu Currency Filters" }
+            div class="cashu-filter-header" {
+                span class="filter-icon" { "🟠" }
+                span class="filter-title" { "Cashu Filters" }
             }
 
-            @if capabilities.is_empty() {
-                div style="color: rgba(255, 255, 255, 0.7); font-style: italic; text-align: center; padding: 1rem;" {
-                    "No Cashu mints with currency information available"
+            @if capabilities.is_empty() && nut_capabilities.is_empty() {
+                div class="no-filters-message" {
+                    "No Cashu mints with filter information available"
                 }
             } @else {
-                div class="currency-filters" {
-                    @for capability in capabilities {
-                        div class="currency-filter" {
-                            div class="currency-name" { (capability.unit.to_uppercase()) }
-                            div class="capability-filters" {
-                                @if capability.can_mint {
-                                    label class="capability-filter" {
-                                        input
-                                            type="checkbox"
-                                            class="capability-checkbox mint-filter"
-                                            data-currency=(capability.unit)
-                                            onchange="updateCashuFilters()";
-                                        span class="capability-label" { "Minting" }
+                div class="filter-sections" {
+                    // Currency Filters Section
+                    @if !capabilities.is_empty() {
+                        div class="filter-section" {
+                            div class="section-title" { "Currency Support" }
+                            div class="currency-grid" {
+                                @for capability in capabilities {
+                                    div class="currency-item" {
+                                        div class="currency-header" { (capability.unit.to_uppercase()) }
+                                        div class="currency-options" {
+                                            @if capability.can_mint {
+                                                label class="filter-option" {
+                                                    input
+                                                        type="checkbox"
+                                                        class="filter-checkbox mint-filter"
+                                                        data-currency=(capability.unit)
+                                                        onchange="updateCashuFilters()";
+                                                    span class="option-label" { "Mint" }
+                                                }
+                                            }
+                                            @if capability.can_melt {
+                                                label class="filter-option" {
+                                                    input
+                                                        type="checkbox"
+                                                        class="filter-checkbox melt-filter"
+                                                        data-currency=(capability.unit)
+                                                        onchange="updateCashuFilters()";
+                                                    span class="option-label" { "Melt" }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-                                @if capability.can_melt {
-                                    label class="capability-filter" {
+                            }
+                        }
+                    }
+
+                    // NUT Filters Section
+                    @if !nut_capabilities.is_empty() {
+                        div class="filter-section" {
+                            div class="section-title" { "Protocol Support (NUTs)" }
+                            div class="nuts-grid" {
+                                @for nut in nut_capabilities {
+                                    label class="nut-option" {
                                         input
                                             type="checkbox"
-                                            class="capability-checkbox melt-filter"
-                                            data-currency=(capability.unit)
+                                            class="filter-checkbox nut-filter"
+                                            data-nut=(nut.nut_number)
                                             onchange="updateCashuFilters()";
-                                        span class="capability-label" { "Melting" }
+                                        span class="nut-label" { "NUT-" (nut.nut_number) }
+                                        span class="nut-description" { (nut.description) }
                                     }
                                 }
                             }
@@ -100,9 +193,9 @@ pub fn render_cashu_filters(capabilities: &[CurrencyCapability]) -> Markup {
 
                 div class="filter-actions" {
                     button class="filter-action-btn clear" onclick="clearCashuFilters()" {
-                        "Clear Filters"
+                        "Clear All"
                     }
-                    button class="filter-action-btn" onclick="selectAllCashuFilters()" {
+                    button class="filter-action-btn select" onclick="selectAllCashuFilters()" {
                         "Select All"
                     }
                 }
@@ -116,27 +209,27 @@ pub fn get_mint_styles() -> &'static str {
     "
     .mints-grid {
         display: grid;
-        gap: 2rem;
-        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 1.5rem;
+        grid-template-columns: 1fr;
     }
 
     .filter-section {
         background: var(--glass-bg);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid var(--glass-border);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 2px solid var(--glass-border);
         border-radius: 24px;
-        padding: 2rem;
-        margin-bottom: 2rem;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
         box-shadow: var(--glass-shadow);
     }
 
     .filter-title {
-        color: white;
-        font-size: 1.2rem;
+        color: var(--text-primary);
+        font-size: 1.1rem;
         font-weight: 700;
         margin-bottom: 1rem;
-        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
     }
 
     .filter-buttons {
@@ -146,48 +239,62 @@ pub fn get_mint_styles() -> &'static str {
     }
 
     .filter-btn {
-        background: rgba(255, 255, 255, 0.1);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(15px);
+        -webkit-backdrop-filter: blur(15px);
+        border: 1px solid rgba(255, 255, 255, 0.15);
         border-radius: 20px;
-        padding: 0.75rem 1.5rem;
-        color: rgba(255, 255, 255, 0.9);
-        font-size: 0.9rem;
-        font-weight: 600;
+        padding: 0.875rem 1.5rem;
+        color: var(--text-primary);
+        font-size: 16px; /* Prevent iOS zoom */
+        font-weight: 700;
         cursor: pointer;
         transition: all 0.3s ease;
         white-space: nowrap;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        /* iOS optimizations */
+        -webkit-appearance: none;
+        appearance: none;
+        -webkit-transform: translateZ(0);
+        transform: translateZ(0);
+        -webkit-tap-highlight-color: transparent;
     }
 
-    .filter-btn:hover {
-        background: rgba(255, 107, 53, 0.2);
+    .filter-btn:hover,
+    .filter-btn:active {
+        background: rgba(255, 107, 53, 0.25);
         border-color: var(--primary-orange);
         color: white;
-        transform: translateY(-2px);
-        box-shadow: 0 8px 25px rgba(255, 107, 53, 0.3);
+        transform: translateY(-3px) translateZ(0);
+        box-shadow: 0 10px 30px rgba(255, 107, 53, 0.4);
     }
 
     .filter-btn.active {
         background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
         border-color: var(--primary-orange);
         color: white;
-        box-shadow: 0 8px 25px rgba(255, 107, 53, 0.4);
+        box-shadow: 0 10px 30px rgba(255, 107, 53, 0.5);
+        transform: translateY(-2px) translateZ(0);
     }
 
-    .filter-btn.active:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 12px 30px rgba(255, 107, 53, 0.5);
+    .filter-btn.active:hover,
+    .filter-btn.active:active {
+        transform: translateY(-4px) translateZ(0);
+        box-shadow: 0 15px 40px rgba(255, 107, 53, 0.6);
     }
 
     .cashu-filters {
-        background: rgba(255, 107, 53, 0.1);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        border: 1px solid rgba(255, 107, 53, 0.2);
-        border-radius: 20px;
-        padding: 1.5rem;
-        margin-top: 1.5rem;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(15px);
+        -webkit-backdrop-filter: blur(15px);
+        border: 2px solid rgba(255, 107, 53, 0.3);
+        border-radius: 16px;
+        padding: 1rem;
+        margin-top: 1rem;
         display: none;
     }
 
@@ -196,116 +303,213 @@ pub fn get_mint_styles() -> &'static str {
         animation: slideDown 0.3s ease;
     }
 
-    .cashu-filter-title {
-        color: white;
-        font-size: 1rem;
-        font-weight: 600;
-        margin-bottom: 1rem;
+    .cashu-filter-header {
+        color: var(--text-primary);
+        font-size: 0.95rem;
+        font-weight: 700;
+        margin-bottom: 0.75rem;
         display: flex;
         align-items: center;
         gap: 0.5rem;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
-    .currency-filters {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1rem;
+    .filter-icon {
+        font-size: 1.1rem;
     }
 
-    .currency-filter {
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 16px;
-        padding: 1rem;
+    .filter-title {
+        color: var(--text-primary);
     }
 
-    .currency-name {
-        color: white;
-        font-weight: 600;
-        font-size: 0.9rem;
-        margin-bottom: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+    .no-filters-message {
+        color: rgba(255, 255, 255, 0.7);
+        font-style: italic;
+        text-align: center;
+        padding: 0.75rem;
+        font-size: 0.85rem;
     }
 
-    .capability-filters {
+    .filter-sections {
         display: flex;
         flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .filter-section {
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 12px;
+        padding: 0.75rem;
+    }
+
+    .section-title {
+        color: var(--text-primary);
+        font-weight: 600;
+        font-size: 0.8rem;
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        opacity: 0.9;
+    }
+
+    .currency-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
         gap: 0.5rem;
     }
 
-    .capability-filter {
+    .currency-item {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 0.5rem;
+    }
+
+    .currency-header {
+        color: var(--text-primary);
+        font-weight: 600;
+        font-size: 0.75rem;
+        margin-bottom: 0.4rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+
+    .currency-options {
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+    }
+
+    .filter-option {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        cursor: pointer;
+        min-height: 32px;
+        padding: 0.2rem 0.4rem;
+        border-radius: 6px;
+        transition: background 0.2s ease;
+    }
+
+    .filter-option:hover {
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    .nuts-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 0.4rem;
+    }
+
+    .nut-option {
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        padding: 0.5rem;
-        border-radius: 8px;
-        transition: background 0.3s ease;
         cursor: pointer;
-    }
-
-    .capability-filter:hover {
+        min-height: 36px;
+        padding: 0.4rem 0.6rem;
+        border-radius: 8px;
         background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        transition: all 0.2s ease;
     }
 
-    .capability-checkbox {
+    .nut-option:hover {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(255, 107, 53, 0.3);
+    }
+
+    .nut-label {
+        color: var(--primary-orange);
+        font-weight: 600;
+        font-size: 0.75rem;
+        min-width: 50px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+
+    .nut-description {
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 0.7rem;
+        flex: 1;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+
+    .filter-checkbox {
         appearance: none;
-        width: 18px;
-        height: 18px;
-        border: 2px solid rgba(255, 255, 255, 0.3);
+        -webkit-appearance: none;
+        width: 16px;
+        height: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
         border-radius: 4px;
         background: transparent;
         cursor: pointer;
         position: relative;
         transition: all 0.3s ease;
+        flex-shrink: 0;
+        -webkit-transform: translateZ(0);
+        transform: translateZ(0);
+        -webkit-tap-highlight-color: transparent;
     }
 
-    .capability-checkbox:checked {
+    .filter-checkbox:checked {
         background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
         border-color: var(--primary-orange);
+        box-shadow: 0 2px 8px rgba(255, 107, 53, 0.4);
+        transform: translateZ(0);
     }
 
-    .capability-checkbox:checked::after {
+    .filter-checkbox:checked::after {
         content: '✓';
         position: absolute;
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
         color: white;
-        font-size: 12px;
+        font-size: 11px;
         font-weight: bold;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
-    .capability-label {
-        color: rgba(255, 255, 255, 0.9);
-        font-size: 0.85rem;
+    .option-label {
+        color: var(--text-primary);
+        font-size: 0.7rem;
         font-weight: 500;
         cursor: pointer;
         user-select: none;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .filter-actions {
         display: flex;
-        gap: 0.75rem;
-        margin-top: 1rem;
-        justify-content: flex-end;
+        gap: 0.5rem;
+        margin-top: 0.75rem;
+        justify-content: center;
+        flex-wrap: wrap;
     }
 
     .filter-action-btn {
         background: rgba(255, 255, 255, 0.1);
         border: 1px solid rgba(255, 255, 255, 0.2);
-        border-radius: 16px;
-        padding: 0.5rem 1rem;
-        color: rgba(255, 255, 255, 0.9);
-        font-size: 0.8rem;
-        font-weight: 500;
+        border-radius: 12px;
+        padding: 0.5rem 0.75rem;
+        color: var(--text-primary);
+        font-size: 0.75rem;
+        font-weight: 600;
         cursor: pointer;
-        transition: all 0.3s ease;
+        transition: all 0.2s ease;
+        min-height: 32px;
+        display: flex;
+        align-items: center;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .filter-action-btn:hover {
         background: rgba(255, 255, 255, 0.2);
         color: white;
+        transform: translateY(-1px);
     }
 
     .filter-action-btn.clear {
@@ -315,21 +519,26 @@ pub fn get_mint_styles() -> &'static str {
     }
 
     .filter-action-btn.clear:hover {
-        background: rgba(239, 68, 68, 0.3);
+        background: rgba(239, 68, 68, 0.4);
         color: white;
+        transform: translateY(-2px);
     }
 
     .mint-card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid var(--glass-border);
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 2px solid rgba(255, 107, 53, 0.3);
         border-radius: 24px;
-        padding: 2rem;
+        padding: 1.5rem;
         box-shadow: var(--glass-shadow);
         transition: all 0.3s ease;
         position: relative;
         overflow: hidden;
+        /* iOS optimizations */
+        -webkit-transform: translateZ(0);
+        transform: translateZ(0);
+        -webkit-tap-highlight-color: transparent;
     }
 
     .mint-card::before {
@@ -339,17 +548,21 @@ pub fn get_mint_styles() -> &'static str {
         left: 0;
         right: 0;
         height: 4px;
-        background: linear-gradient(90deg, var(--primary-orange), var(--secondary-orange));
+        background: linear-gradient(90deg, var(--primary-orange), var(--secondary-orange), var(--accent-purple));
         opacity: 0;
         transition: opacity 0.3s ease;
     }
 
-    .mint-card:hover {
-        transform: translateY(-8px);
-        box-shadow: 0 16px 50px rgba(31, 38, 135, 0.6);
+    .mint-card:hover,
+    .mint-card:active {
+        transform: translateY(-8px) translateZ(0);
+        box-shadow: 0 20px 60px rgba(31, 38, 135, 0.7);
+        border-color: rgba(255, 107, 53, 0.5);
+        background: rgba(0, 0, 0, 0.7);
     }
 
-    .mint-card:hover::before {
+    .mint-card:hover::before,
+    .mint-card:active::before {
         opacity: 1;
     }
 
@@ -358,25 +571,29 @@ pub fn get_mint_styles() -> &'static str {
         justify-content: space-between;
         align-items: flex-start;
         margin-bottom: 1.5rem;
+        gap: 1rem;
     }
 
     .mint-title-section {
         flex: 1;
+        min-width: 0;
     }
 
     .mint-name {
-        font-size: 1.5rem;
-        font-weight: 700;
-        color: white;
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: var(--text-primary);
         margin-bottom: 0.5rem;
-        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        word-break: break-word;
     }
 
     .mint-url {
-        font-size: 0.9rem;
-        color: rgba(255, 255, 255, 0.8);
+        font-size: 0.85rem;
+        color: var(--text-secondary);
         margin-bottom: 0.5rem;
         word-break: break-all;
+        line-height: 1.4;
     }
 
     .mint-url a {
@@ -392,67 +609,73 @@ pub fn get_mint_styles() -> &'static str {
     .mint-type {
         background: linear-gradient(135deg, var(--primary-blue), var(--light-blue));
         color: white;
-        padding: 0.5rem 1rem;
+        padding: 0.625rem 1.25rem;
         border-radius: 20px;
         font-size: 0.8rem;
         text-transform: uppercase;
-        font-weight: 600;
-        letter-spacing: 0.5px;
-        box-shadow: 0 4px 12px rgba(30, 64, 175, 0.3);
+        font-weight: 700;
+        letter-spacing: 0.75px;
+        box-shadow: 0 6px 16px rgba(30, 64, 175, 0.4);
         white-space: nowrap;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        flex-shrink: 0;
     }
 
     .health-status {
         display: flex;
         align-items: center;
-        gap: 0.5rem;
-        margin-top: 0.5rem;
+        gap: 0.75rem;
+        margin-top: 0.75rem;
+        flex-wrap: wrap;
     }
 
     .health-indicator {
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        padding: 0.5rem 1rem;
+        padding: 0.625rem 1.25rem;
         border-radius: 20px;
         font-size: 0.8rem;
-        font-weight: 600;
+        font-weight: 700;
         letter-spacing: 0.5px;
         white-space: nowrap;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .health-online {
-        background: linear-gradient(135deg, #10B981, #059669);
+        background: linear-gradient(135deg, var(--accent-green), #059669);
         color: white;
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
     }
 
     .health-offline {
-        background: linear-gradient(135deg, #EF4444, #DC2626);
+        background: linear-gradient(135deg, var(--accent-red), #DC2626);
         color: white;
-        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+        box-shadow: 0 6px 16px rgba(239, 68, 68, 0.4);
     }
 
     .health-warning {
-        background: linear-gradient(135deg, #F59E0B, #D97706);
+        background: linear-gradient(135deg, var(--accent-yellow), #D97706);
         color: white;
-        box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+        box-shadow: 0 6px 16px rgba(245, 158, 11, 0.4);
     }
 
     .health-dot {
-        width: 8px;
-        height: 8px;
+        width: 10px;
+        height: 10px;
         border-radius: 50%;
         background: currentColor;
         animation: pulse 2s infinite;
     }
 
     .uptime-bar {
-        background: rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.25);
         border-radius: 8px;
-        height: 6px;
+        height: 8px;
         overflow: hidden;
         margin-top: 0.5rem;
+        flex: 1;
+        min-width: 100px;
     }
 
     .uptime-fill {
@@ -462,37 +685,37 @@ pub fn get_mint_styles() -> &'static str {
     }
 
     .uptime-excellent {
-        background: linear-gradient(90deg, #10B981, #34D399);
+        background: linear-gradient(90deg, var(--accent-green), #34D399);
     }
 
     .uptime-good {
-        background: linear-gradient(90deg, #F59E0B, #FBBF24);
+        background: linear-gradient(90deg, var(--accent-yellow), #FBBF24);
     }
 
     .uptime-poor {
-        background: linear-gradient(90deg, #EF4444, #F87171);
+        background: linear-gradient(90deg, var(--accent-red), #F87171);
     }
 
     @keyframes pulse {
         0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
+        50% { opacity: 0.6; }
     }
 
     .mint-description {
-        color: rgba(255, 255, 255, 0.9);
+        color: var(--text-secondary);
         margin-bottom: 1.5rem;
         font-size: 0.95rem;
         line-height: 1.6;
     }
 
     .info-section {
-        background: rgba(255, 255, 255, 0.15);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(15px);
+        -webkit-backdrop-filter: blur(15px);
+        border: 1px solid rgba(255, 255, 255, 0.12);
         border-radius: 16px;
-        padding: 1.5rem;
-        margin-bottom: 1.5rem;
+        padding: 1.25rem;
+        margin-bottom: 1.25rem;
     }
 
     .info-header {
@@ -500,17 +723,19 @@ pub fn get_mint_styles() -> &'static str {
         align-items: center;
         justify-content: space-between;
         margin-bottom: 1rem;
-        font-weight: 600;
-        color: white;
-        font-size: 1.1rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        font-size: 1.05rem;
         cursor: pointer;
-        padding: 0.5rem;
-        border-radius: 8px;
+        padding: 0.75rem;
+        border-radius: 12px;
         transition: background 0.3s ease;
+        min-height: 44px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .info-header:hover {
-        background: rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.08);
     }
 
     .info-header-left {
@@ -521,8 +746,9 @@ pub fn get_mint_styles() -> &'static str {
 
     .info-expand-indicator {
         color: var(--primary-orange);
-        font-size: 1rem;
+        font-size: 1.2rem;
         transition: transform 0.3s ease;
+        filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
     }
 
     .info-expand-indicator.expanded {
@@ -540,34 +766,36 @@ pub fn get_mint_styles() -> &'static str {
 
     .info-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        grid-template-columns: 1fr;
         gap: 1rem;
         margin-bottom: 1rem;
     }
 
     .info-item {
-        background: rgba(255, 255, 255, 0.1);
-        backdrop-filter: blur(4px);
-        -webkit-backdrop-filter: blur(4px);
-        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 12px;
         padding: 1rem;
     }
 
     .info-label {
-        font-weight: 600;
-        color: rgba(255, 255, 255, 0.7);
+        font-weight: 700;
+        color: var(--text-secondary);
         font-size: 0.8rem;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.75px;
         margin-bottom: 0.5rem;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .info-value {
-        color: white;
+        color: var(--text-primary);
         font-size: 0.9rem;
         word-break: break-word;
-        font-weight: 500;
+        font-weight: 600;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .nuts-container {
@@ -578,15 +806,16 @@ pub fn get_mint_styles() -> &'static str {
     }
 
     .nut-badge {
-        background: linear-gradient(135deg, #10B981, #059669);
+        background: linear-gradient(135deg, var(--accent-green), #059669);
         color: white;
-        padding: 0.25rem 0.75rem;
+        padding: 0.375rem 0.875rem;
         border-radius: 16px;
         font-size: 0.75rem;
-        font-weight: 600;
-        box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+        font-weight: 700;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
         text-transform: uppercase;
-        letter-spacing: 0.25px;
+        letter-spacing: 0.5px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .contact-list {
@@ -594,13 +823,15 @@ pub fn get_mint_styles() -> &'static str {
     }
 
     .contact-item {
-        background: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 8px;
-        padding: 0.75rem;
+        padding: 0.875rem;
         margin-bottom: 0.5rem;
         font-size: 0.85rem;
-        color: rgba(255, 255, 255, 0.9);
+        color: var(--text-secondary);
+        font-weight: 500;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .method-grid {
@@ -611,34 +842,39 @@ pub fn get_mint_styles() -> &'static str {
     }
 
     .method-item {
-        background: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 8px;
-        padding: 0.75rem;
+        padding: 0.875rem;
         display: flex;
         justify-content: space-between;
         align-items: center;
         gap: 1rem;
+        flex-wrap: wrap;
     }
 
     .method-unit {
-        background: linear-gradient(135deg, #8B5CF6, #A855F7);
+        background: linear-gradient(135deg, var(--accent-purple), #A855F7);
         color: white;
-        padding: 0.25rem 0.75rem;
+        padding: 0.375rem 0.875rem;
         border-radius: 12px;
         font-size: 0.75rem;
-        font-weight: 600;
+        font-weight: 700;
         text-transform: uppercase;
-        letter-spacing: 0.25px;
-        box-shadow: 0 2px 8px rgba(139, 92, 246, 0.3);
+        letter-spacing: 0.5px;
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
         white-space: nowrap;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .method-details {
-        color: rgba(255, 255, 255, 0.9);
+        color: var(--text-secondary);
         font-size: 0.85rem;
-        font-weight: 500;
+        font-weight: 600;
         text-align: right;
+        flex: 1;
+        min-width: 0;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .ratings-section {
@@ -651,24 +887,28 @@ pub fn get_mint_styles() -> &'static str {
         gap: 1rem;
         margin-bottom: 1rem;
         padding: 1rem;
-        background: rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.05);
         border-radius: 12px;
-        backdrop-filter: blur(4px);
-        -webkit-backdrop-filter: blur(4px);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        flex-wrap: wrap;
     }
 
     .rating-score {
         font-size: 2rem;
-        font-weight: 700;
+        font-weight: 800;
         background: linear-gradient(135deg, var(--secondary-orange), var(--primary-orange));
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
     }
 
     .rating-details {
-        color: rgba(255, 255, 255, 0.8);
-        font-weight: 500;
+        color: var(--text-secondary);
+        font-weight: 600;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .reviews-summary-container {
@@ -677,13 +917,14 @@ pub fn get_mint_styles() -> &'static str {
         justify-content: space-between;
         gap: 1rem;
         cursor: pointer;
-        padding: 0.5rem;
+        padding: 0.75rem;
         border-radius: 12px;
         transition: background 0.3s ease;
+        min-height: 44px;
     }
 
     .reviews-summary-container:hover {
-        background: rgba(255, 255, 255, 0.05);
+        background: rgba(255, 255, 255, 0.1);
     }
 
     .reviewers-stack {
@@ -693,11 +934,11 @@ pub fn get_mint_styles() -> &'static str {
     }
 
     .reviewer-bubble {
-        width: 32px;
-        height: 32px;
+        width: 36px;
+        height: 36px;
         border-radius: 50%;
-        border: 2px solid rgba(255, 255, 255, 0.3);
-        margin-left: -8px;
+        border: 2px solid rgba(255, 255, 255, 0.2);
+        margin-left: -10px;
         transition: all 0.3s ease;
         position: relative;
         z-index: 1;
@@ -708,9 +949,10 @@ pub fn get_mint_styles() -> &'static str {
     }
 
     .reviewer-bubble:hover {
-        transform: translateY(-4px) scale(1.1);
+        transform: translateY(-6px) scale(1.15);
         z-index: 10;
         border-color: var(--primary-orange);
+        box-shadow: 0 8px 20px rgba(255, 107, 53, 0.4);
     }
 
     .reviewer-avatar {
@@ -729,24 +971,27 @@ pub fn get_mint_styles() -> &'static str {
         align-items: center;
         justify-content: center;
         color: white;
-        font-size: 12px;
+        font-size: 14px;
         font-weight: bold;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .more-reviewers {
-        background: rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.25);
         color: white;
-        font-size: 10px;
-        font-weight: 600;
+        font-size: 11px;
+        font-weight: 700;
         display: flex;
         align-items: center;
         justify-content: center;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .expand-indicator {
         color: var(--primary-orange);
-        font-size: 1.2rem;
+        font-size: 1.4rem;
         transition: transform 0.3s ease;
+        filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
     }
 
     .expand-indicator.expanded {
@@ -784,106 +1029,247 @@ pub fn get_mint_styles() -> &'static str {
     }
 
     .reviewer-card-link:hover {
-        transform: translateY(-2px);
+        transform: translateY(-3px);
     }
 
     .reviewer-card {
         display: flex;
         align-items: center;
         gap: 0.75rem;
-        background: rgba(255, 255, 255, 0.1);
+        background: rgba(0, 0, 0, 0.4);
         backdrop-filter: blur(8px);
         -webkit-backdrop-filter: blur(8px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.15);
         border-radius: 25px;
-        padding: 0.75rem 1rem;
+        padding: 0.875rem 1.25rem;
         font-size: 0.85rem;
         transition: all 0.3s ease;
         cursor: pointer;
+        min-height: 44px;
     }
 
     .reviewer-card:hover {
         background: rgba(255, 107, 53, 0.2);
         border-color: var(--primary-orange);
+        box-shadow: 0 8px 20px rgba(255, 107, 53, 0.3);
     }
 
     .reviewer-card .reviewer-avatar {
-        width: 32px;
-        height: 32px;
+        width: 36px;
+        height: 36px;
         border-radius: 50%;
         object-fit: cover;
-        border: 2px solid rgba(255, 255, 255, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.2);
     }
 
     .reviewer-card .no-avatar {
-        width: 32px;
-        height: 32px;
+        width: 36px;
+        height: 36px;
         border-radius: 50%;
         background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
         display: flex;
         align-items: center;
         justify-content: center;
         color: white;
-        font-size: 14px;
+        font-size: 16px;
         font-weight: bold;
-        border: 2px solid rgba(255, 255, 255, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .reviewer-avatar {
-        width: 32px;
-        height: 32px;
+        width: 36px;
+        height: 36px;
         border-radius: 50%;
         object-fit: cover;
-        border: 2px solid rgba(255, 255, 255, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.2);
     }
 
     .reviewer-name {
-        font-weight: 600;
-        color: white;
+        font-weight: 700;
+        color: var(--text-primary);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .reviewer-rating {
         color: var(--secondary-orange);
-        font-weight: 700;
+        font-weight: 800;
         font-size: 0.9rem;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .no-avatar {
-        width: 32px;
-        height: 32px;
+        width: 36px;
+        height: 36px;
         border-radius: 50%;
         background: linear-gradient(135deg, var(--primary-orange), var(--secondary-orange));
         display: flex;
         align-items: center;
         justify-content: center;
         color: white;
-        font-size: 14px;
+        font-size: 16px;
         font-weight: bold;
-        border: 2px solid rgba(255, 255, 255, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .no-info {
-        color: rgba(255, 255, 255, 0.7);
+        color: var(--text-secondary);
         font-style: italic;
         text-align: center;
         padding: 1rem;
+        font-weight: 500;
     }
 
-    @media (max-width: 768px) {
-        .mints-grid {
-            grid-template-columns: 1fr;
+    /* Mobile responsive design */
+    @media (max-width: 480px) {
+        .filter-section {
+            padding: 1rem;
+            border-radius: 20px;
+        }
+
+        .filter-title {
+            font-size: 1rem;
+        }
+
+        .filter-buttons {
+            gap: 0.5rem;
+        }
+
+        .filter-btn {
+            padding: 0.75rem 1rem;
+            font-size: 0.8rem;
+            min-width: 80px;
+        }
+
+        .currency-filters {
+            gap: 0.75rem;
+        }
+
+        .currency-filter {
+            padding: 0.75rem;
+        }
+
+        .mint-card {
+            padding: 1rem;
+            border-radius: 20px;
         }
 
         .mint-header {
             flex-direction: column;
+            gap: 0.75rem;
+            align-items: stretch;
+        }
+
+        .mint-name {
+            font-size: 1.2rem;
+        }
+
+        .mint-type {
+            align-self: flex-start;
+            padding: 0.5rem 1rem;
+            font-size: 0.75rem;
+        }
+
+        .health-status {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.5rem;
+        }
+
+        .uptime-bar {
+            min-width: auto;
+        }
+
+        .info-grid {
+            gap: 0.75rem;
+        }
+
+        .info-item {
+            padding: 0.75rem;
+        }
+
+        .method-item {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.5rem;
+        }
+
+        .method-details {
+            text-align: left;
+        }
+
+        .ratings-summary {
+            flex-direction: column;
+            text-align: center;
+            gap: 0.75rem;
+        }
+
+        .rating-score {
+            font-size: 1.75rem;
+        }
+
+        .reviews-summary-container {
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .reviewers-grid {
+            gap: 0.5rem;
+        }
+
+        .reviewer-card {
+            padding: 0.75rem 1rem;
+            font-size: 0.8rem;
+        }
+    }
+
+    @media (min-width: 481px) and (max-width: 768px) {
+        .mints-grid {
+            gap: 1.25rem;
+        }
+
+        .currency-filters {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .info-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .mint-header {
+            flex-wrap: wrap;
             gap: 1rem;
+        }
+    }
+
+    @media (min-width: 769px) {
+        .mints-grid {
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 2rem;
+        }
+
+        .currency-filters {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        }
+
+        .info-grid {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        }
+
+        .mint-card {
+            padding: 2rem;
+        }
+
+        .filter-section {
+            padding: 2rem;
         }
     }
     "
 }
 
 /// Helper function to extract supported NUTs from a Nuts struct
-fn get_supported_nuts(nuts: &cdk::nuts::Nuts) -> Vec<String> {
+pub fn get_supported_nuts(nuts: &cdk::nuts::Nuts) -> Vec<String> {
     let mut supported = Vec::new();
 
     // Check each NUT and see if it's supported

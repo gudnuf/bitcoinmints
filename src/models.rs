@@ -188,6 +188,8 @@ pub struct MintQueryParams {
     pub minting: Option<String>,
     /// Comma-separated list of currencies that must support melting (only for Cashu mints)
     pub melting: Option<String>,
+    /// Comma-separated list of NUT protocols that must be supported (only for Cashu mints)
+    pub nuts: Option<String>,
 }
 
 /// Cache key types for different cached data

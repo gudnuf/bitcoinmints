@@ -529,6 +529,7 @@ impl CachedDatabase {
         params.mint_type.hash(&mut hasher);
         params.minting.hash(&mut hasher);
         params.melting.hash(&mut hasher);
+        params.nuts.hash(&mut hasher);
 
         format!("{:x}", hasher.finish())
     }

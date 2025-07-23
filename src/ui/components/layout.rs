@@ -34,9 +34,12 @@ pub fn render_layout(title: &str, tagline: &str, active_page: &str, content: Mar
         html lang="en" {
             head {
                 meta charset="utf-8";
-                meta name="viewport" content="width=device-width, initial-scale=1";
+                meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
+                meta name="apple-mobile-web-app-capable" content="yes";
+                meta name="apple-mobile-web-app-status-bar-style" content="black-translucent";
+                meta name="format-detection" content="telephone=no";
                 title { (title) }
-                link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet";
+                link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet";
                 style { (get_shared_styles()) }
             }
             body {

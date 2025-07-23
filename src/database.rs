@@ -1,4 +1,5 @@
 use crate::models::*;
+use crate::ui::components::mint_card::get_supported_nuts;
 use crate::utils::normalize_mint_url;
 use anyhow::Result;
 use chrono::Utc;
@@ -323,9 +324,11 @@ impl Database {
         let mut mints_with_info = Vec::new();
 
         for mint_with_recs in mints_with_recs {
-            // Apply Cashu currency filters if specified
+            // Apply Cashu currency and NUT filters if specified
             if query_params.mint_type.as_deref() == Some("cashu")
-                && (query_params.minting.is_some() || query_params.melting.is_some())
+                && (query_params.minting.is_some()
+                    || query_params.melting.is_some()
+                    || query_params.nuts.is_some())
             {
                 let mut passes_filter = true;
 
@@ -391,7 +394,31 @@ impl Database {
                     }
                 }
 
-                // Skip this mint if it doesn't pass the currency filters
+                // Check NUT filters
+                if passes_filter {
+                    if let Some(nuts_str) = &query_params.nuts {
+                        let required_nuts: Vec<&str> = nuts_str
+                            .split(',')
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+
+                        if !required_nuts.is_empty() {
+                            // Get supported NUTs for this mint
+                            let supported_nuts = get_supported_nuts(&mint_with_recs.mint.nuts);
+
+                            // Check if all required NUTs are supported
+                            for required_nut in required_nuts {
+                                if !supported_nuts.contains(&required_nut.to_string()) {
+                                    passes_filter = false;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Skip this mint if it doesn't pass the filters
                 if !passes_filter {
                     continue;
                 }

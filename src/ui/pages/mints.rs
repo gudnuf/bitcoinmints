@@ -1,6 +1,7 @@
 use crate::models::MintWithRecommendationsAndInfo;
 use crate::ui::components::mint_card::{
-    extract_currency_capabilities, get_mint_styles, render_cashu_filters, render_mint_card,
+    extract_currency_capabilities, extract_nut_capabilities, get_mint_styles, render_cashu_filters,
+    render_mint_card,
 };
 use crate::ui::components::{render_empty_state, render_layout, render_stats_row};
 use maud::{html, Markup, PreEscaped};
@@ -10,9 +11,10 @@ pub fn render_mints_page(
     mints: &[MintWithRecommendationsAndInfo],
     current_filter: Option<&str>,
 ) -> Markup {
-    // Extract currency capabilities for Cashu filters
+    // Extract currency and NUT capabilities for Cashu filters
     let all_mints_for_capabilities = mints; // Use all mints to get capabilities, not filtered ones
     let currency_capabilities = extract_currency_capabilities(all_mints_for_capabilities);
+    let nut_capabilities = extract_nut_capabilities(all_mints_for_capabilities);
 
     let content = html! {
         style { (get_mint_styles()) }
@@ -51,6 +53,7 @@ pub fn render_mints_page(
                 // Clear Cashu-specific filters when switching types
                 url.searchParams.delete('minting');
                 url.searchParams.delete('melting');
+                url.searchParams.delete('nuts');
                 
                 if (type === 'all') {
                     url.searchParams.delete('type');
@@ -84,6 +87,7 @@ pub fn render_mints_page(
                 const url = new URL(window.location);
                 const mintFilters = Array.from(document.querySelectorAll('.mint-filter:checked')).map(cb => cb.dataset.currency);
                 const meltFilters = Array.from(document.querySelectorAll('.melt-filter:checked')).map(cb => cb.dataset.currency);
+                const nutFilters = Array.from(document.querySelectorAll('.nut-filter:checked')).map(cb => cb.dataset.nut);
                 
                 if (mintFilters.length > 0) {
                     url.searchParams.set('minting', mintFilters.join(','));
@@ -97,6 +101,12 @@ pub fn render_mints_page(
                     url.searchParams.delete('melting');
                 }
                 
+                if (nutFilters.length > 0) {
+                    url.searchParams.set('nuts', nutFilters.join(','));
+                } else {
+                    url.searchParams.delete('nuts');
+                }
+                
                 window.location.href = url.toString();
             }
             
@@ -104,11 +114,12 @@ pub fn render_mints_page(
                 const url = new URL(window.location);
                 url.searchParams.delete('minting');
                 url.searchParams.delete('melting');
+                url.searchParams.delete('nuts');
                 window.location.href = url.toString();
             }
             
             function selectAllCashuFilters() {
-                const checkboxes = document.querySelectorAll('.capability-checkbox');
+                const checkboxes = document.querySelectorAll('.filter-checkbox');
                 checkboxes.forEach(cb => cb.checked = true);
                 updateCashuFilters();
             }
@@ -121,6 +132,7 @@ pub fn render_mints_page(
                 const url = new URL(window.location);
                 const mintingCurrencies = url.searchParams.get('minting')?.split(',') || [];
                 const meltingCurrencies = url.searchParams.get('melting')?.split(',') || [];
+                const nutProtocols = url.searchParams.get('nuts')?.split(',') || [];
                 
                 mintingCurrencies.forEach(currency => {
                     const checkbox = document.querySelector(`.mint-filter[data-currency="${currency}"]`);
@@ -129,6 +141,11 @@ pub fn render_mints_page(
                 
                 meltingCurrencies.forEach(currency => {
                     const checkbox = document.querySelector(`.melt-filter[data-currency="${currency}"]`);
+                    if (checkbox) checkbox.checked = true;
+                });
+                
+                nutProtocols.forEach(nut => {
+                    const checkbox = document.querySelector(`.nut-filter[data-nut="${nut}"]`);
                     if (checkbox) checkbox.checked = true;
                 });
             });
@@ -153,9 +170,9 @@ pub fn render_mints_page(
                 { "🔵 Fedimint" }
             }
 
-            // Cashu-specific currency filters
+            // Cashu-specific currency and NUT filters
             @if current_filter == Some("cashu") {
-                (render_cashu_filters(&currency_capabilities))
+                (render_cashu_filters(&currency_capabilities, &nut_capabilities))
             }
         }
 

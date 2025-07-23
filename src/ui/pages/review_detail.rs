@@ -196,43 +196,46 @@ fn get_review_detail_styles() -> &'static str {
     .review-detail-container {
         max-width: 900px;
         margin: 0 auto;
+        padding: 0 1rem;
     }
 
     .back-nav {
-        margin-bottom: 2rem;
+        margin-bottom: 1.5rem;
     }
 
     .back-link {
         display: inline-flex;
         align-items: center;
-        gap: 0.5rem;
-        background: rgba(255, 255, 255, 0.1);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        gap: 0.75rem;
+        background: rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(15px);
+        -webkit-backdrop-filter: blur(15px);
+        border: 1px solid rgba(255, 255, 255, 0.12);
         border-radius: 20px;
-        padding: 0.75rem 1.5rem;
-        color: rgba(255, 255, 255, 0.9);
+        padding: 0.875rem 1.75rem;
+        color: var(--text-primary);
         text-decoration: none;
-        font-weight: 500;
+        font-weight: 600;
         transition: all 0.3s ease;
+        min-height: 44px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .back-link:hover {
-        background: rgba(255, 107, 53, 0.2);
+        background: rgba(255, 107, 53, 0.25);
         border-color: var(--primary-orange);
         color: white;
-        transform: translateY(-2px);
-        box-shadow: 0 8px 25px rgba(255, 107, 53, 0.3);
+        transform: translateY(-3px);
+        box-shadow: 0 10px 30px rgba(255, 107, 53, 0.4);
     }
 
     .review-detail-card {
         background: var(--glass-bg);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid var(--glass-border);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 2px solid var(--glass-border);
         border-radius: 24px;
-        padding: 2.5rem;
+        padding: 2rem;
         box-shadow: var(--glass-shadow);
         position: relative;
         overflow: hidden;
@@ -245,7 +248,7 @@ fn get_review_detail_styles() -> &'static str {
         left: 0;
         right: 0;
         height: 4px;
-        background: linear-gradient(90deg, var(--primary-orange), var(--secondary-orange));
+        background: linear-gradient(90deg, var(--primary-orange), var(--secondary-orange), var(--accent-purple));
     }
 
     .review-detail-header {
@@ -260,6 +263,7 @@ fn get_review_detail_styles() -> &'static str {
         display: flex;
         gap: 1.5rem;
         flex: 1;
+        min-width: 0;
     }
 
     .reviewer-avatar-large {
@@ -267,7 +271,8 @@ fn get_review_detail_styles() -> &'static str {
         height: 80px;
         border-radius: 50%;
         object-fit: cover;
-        border: 3px solid rgba(255, 255, 255, 0.3);
+        border: 2px solid rgba(255, 255, 255, 0.2);
+        flex-shrink: 0;
     }
 
     .no-avatar-large {
@@ -281,46 +286,55 @@ fn get_review_detail_styles() -> &'static str {
         color: white;
         font-size: 28px;
         font-weight: bold;
-        border: 3px solid rgba(255, 255, 255, 0.3);
+        border: 2px solid rgba(255, 255, 255, 0.2);
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+        flex-shrink: 0;
     }
 
     .reviewer-info {
         flex: 1;
+        min-width: 0;
     }
 
     .reviewer-name-large {
         font-size: 1.5rem;
-        font-weight: 700;
-        color: white;
+        font-weight: 800;
+        color: var(--text-primary);
         margin-bottom: 0.5rem;
-        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        word-break: break-word;
     }
 
     .reviewer-pubkey-large {
         font-size: 0.9rem;
-        color: rgba(255, 255, 255, 0.7);
-        font-family: monospace;
+        color: var(--text-secondary);
+        font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
         margin-bottom: 0.75rem;
+        word-break: break-all;
+        line-height: 1.4;
     }
 
     .reviewer-about {
-        color: rgba(255, 255, 255, 0.9);
+        color: var(--text-primary);
         line-height: 1.6;
         margin-bottom: 0.75rem;
         font-size: 0.95rem;
+        font-weight: 500;
     }
 
     .reviewer-website,
     .reviewer-nip05 {
         font-size: 0.85rem;
-        color: rgba(255, 255, 255, 0.8);
+        color: var(--text-secondary);
         margin-bottom: 0.5rem;
+        font-weight: 500;
     }
 
     .reviewer-website a {
         color: var(--primary-orange);
         text-decoration: none;
         transition: color 0.3s ease;
+        font-weight: 600;
     }
 
     .reviewer-website a:hover {
@@ -330,13 +344,14 @@ fn get_review_detail_styles() -> &'static str {
     .rating-section {
         text-align: center;
         min-width: 150px;
+        flex-shrink: 0;
     }
 
     .rating-display {
-        background: rgba(255, 255, 255, 0.1);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(15px);
+        -webkit-backdrop-filter: blur(15px);
+        border: 1px solid rgba(255, 255, 255, 0.12);
         border-radius: 20px;
         padding: 1.5rem;
     }
@@ -357,39 +372,41 @@ fn get_review_detail_styles() -> &'static str {
     }
 
     .rating-value {
-        color: white;
+        color: var(--text-primary);
         font-size: 1.2rem;
-        font-weight: 700;
+        font-weight: 800;
         background: linear-gradient(135deg, var(--secondary-orange), var(--primary-orange));
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
     }
 
     .no-rating {
-        color: rgba(255, 255, 255, 0.7);
+        color: var(--text-secondary);
         font-style: italic;
         padding: 1.5rem;
+        font-weight: 500;
     }
 
     .section-title {
         font-size: 1.2rem;
-        font-weight: 700;
-        color: white;
+        font-weight: 800;
+        color: var(--text-primary);
         margin-bottom: 1rem;
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
     }
 
     .mint-section,
     .content-section,
     .metadata-section {
-        background: rgba(255, 255, 255, 0.1);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(15px);
+        -webkit-backdrop-filter: blur(15px);
+        border: 1px solid rgba(255, 255, 255, 0.12);
         border-radius: 16px;
         padding: 1.5rem;
         margin-bottom: 1.5rem;
@@ -401,36 +418,45 @@ fn get_review_detail_styles() -> &'static str {
 
     .mint-label,
     .invite-label {
-        color: rgba(255, 255, 255, 0.8);
-        font-weight: 600;
-        margin-bottom: 0.5rem;
+        color: var(--text-secondary);
+        font-weight: 700;
+        margin-bottom: 0.75rem;
         font-size: 0.9rem;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.75px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .mint-pubkey-value {
-        background: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 8px;
-        padding: 0.75rem;
-        font-family: monospace;
+        padding: 0.875rem;
+        font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
         font-size: 0.85rem;
-        color: white;
+        color: var(--text-primary);
         word-break: break-all;
+        line-height: 1.4;
+        font-weight: 500;
     }
 
     .invite-codes-list {
         display: flex;
         flex-direction: column;
-        gap: 0.5rem;
+        gap: 0.75rem;
     }
 
     .invite-code-item {
-        background: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 8px;
-        padding: 0.75rem;
+        padding: 0.875rem;
+        transition: all 0.3s ease;
+    }
+
+    .invite-code-item:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.2);
     }
 
     .invite-code-item a {
@@ -438,6 +464,10 @@ fn get_review_detail_styles() -> &'static str {
         text-decoration: none;
         word-break: break-all;
         transition: color 0.3s ease;
+        font-weight: 600;
+        font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+        font-size: 0.85rem;
+        line-height: 1.4;
     }
 
     .invite-code-item a:hover {
@@ -445,53 +475,80 @@ fn get_review_detail_styles() -> &'static str {
     }
 
     .review-content-display {
-        background: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 12px;
         padding: 1.5rem;
-        color: rgba(255, 255, 255, 0.95);
+        color: var(--text-primary);
         line-height: 1.7;
         white-space: pre-wrap;
         font-size: 1rem;
+        font-weight: 500;
     }
 
     .metadata-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        grid-template-columns: 1fr;
         gap: 1rem;
     }
 
     .metadata-item {
-        background: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 8px;
-        padding: 0.75rem;
+        padding: 0.875rem;
     }
 
     .metadata-label {
-        color: rgba(255, 255, 255, 0.7);
+        color: var(--text-secondary);
         font-size: 0.8rem;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-bottom: 0.25rem;
-        font-weight: 600;
+        letter-spacing: 0.75px;
+        margin-bottom: 0.5rem;
+        font-weight: 700;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .metadata-value {
-        color: white;
+        color: var(--text-primary);
         font-size: 0.9rem;
         word-break: break-word;
+        font-weight: 600;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     .metadata-value.event-id {
-        font-family: monospace;
+        font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
         font-size: 0.75rem;
+        line-height: 1.4;
+        font-weight: 500;
     }
 
-    @media (max-width: 768px) {
+    /* Mobile responsive design */
+    @media (max-width: 480px) {
+        .review-detail-container {
+            padding: 0 0.75rem;
+        }
+
+        .back-nav {
+            margin-bottom: 1rem;
+        }
+
+        .back-link {
+            padding: 0.75rem 1.25rem;
+            font-size: 0.9rem;
+            gap: 0.5rem;
+        }
+
+        .review-detail-card {
+            padding: 1rem;
+            border-radius: 20px;
+        }
+
         .review-detail-header {
             flex-direction: column;
             gap: 1.5rem;
+            margin-bottom: 1.5rem;
         }
 
         .reviewer-section {
@@ -500,12 +557,119 @@ fn get_review_detail_styles() -> &'static str {
             gap: 1rem;
         }
 
+        .reviewer-avatar-large, .no-avatar-large {
+            width: 64px;
+            height: 64px;
+            font-size: 24px;
+            align-self: center;
+        }
+
+        .reviewer-name-large {
+            font-size: 1.25rem;
+        }
+
+        .reviewer-pubkey-large {
+            font-size: 0.8rem;
+        }
+
+        .reviewer-about {
+            font-size: 0.9rem;
+            text-align: left;
+        }
+
+        .rating-section {
+            min-width: auto;
+            align-self: stretch;
+        }
+
+        .rating-display {
+            padding: 1rem;
+        }
+
+        .rating-stars {
+            font-size: 1.25rem;
+        }
+
+        .rating-value {
+            font-size: 1.1rem;
+        }
+
+        .section-title {
+            font-size: 1.1rem;
+        }
+
+        .mint-section,
+        .content-section,
+        .metadata-section {
+            padding: 1rem;
+            border-radius: 12px;
+        }
+
+        .mint-pubkey-value {
+            font-size: 0.75rem;
+            padding: 0.75rem;
+        }
+
+        .invite-code-item {
+            padding: 0.75rem;
+        }
+
+        .invite-code-item a {
+            font-size: 0.75rem;
+        }
+
+        .review-content-display {
+            padding: 1rem;
+            font-size: 0.95rem;
+        }
+
         .metadata-grid {
-            grid-template-columns: 1fr;
+            gap: 0.75rem;
+        }
+
+        .metadata-item {
+            padding: 0.75rem;
+        }
+
+        .metadata-value.event-id {
+            font-size: 0.7rem;
+        }
+    }
+
+    @media (min-width: 481px) and (max-width: 768px) {
+        .review-detail-container {
+            padding: 0 1rem;
+        }
+
+        .review-detail-header {
+            flex-wrap: wrap;
+            gap: 1.5rem;
+        }
+
+        .reviewer-section {
+            min-width: 300px;
+        }
+
+        .metadata-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    @media (min-width: 769px) {
+        .review-detail-container {
+            padding: 0 2rem;
+        }
+
+        .back-nav {
+            margin-bottom: 2rem;
         }
 
         .review-detail-card {
-            padding: 1.5rem;
+            padding: 2.5rem;
+        }
+
+        .metadata-grid {
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
         }
     }
     "
