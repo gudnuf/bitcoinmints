@@ -9,6 +9,7 @@ mod cached_database;
 mod database;
 mod fedimint_service;
 mod handlers;
+mod mint_coordinator;
 mod mint_info_service;
 mod models;
 mod nostr;
@@ -202,6 +203,17 @@ async fn main() -> Result<()> {
             );
         }
     });
+
+    // Initialize Mint Coordinator
+    let mint_coordinator = mint_coordinator::MintCoordinator::new(
+        database.clone(),
+        mint_info_service.clone(),
+        fedimint_service.clone(),
+    );
+
+    // Set the coordinator in the cached database
+    let mut cached_database = cached_database;
+    cached_database.set_mint_coordinator(mint_coordinator);
 
     // Build the router with cached database
     let app = Router::new()

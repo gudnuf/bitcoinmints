@@ -1,5 +1,6 @@
 use crate::cache::CacheService;
 use crate::database::Database;
+use crate::mint_coordinator::MintCoordinator;
 use crate::models::*;
 use anyhow::Result;
 use serde_json;
@@ -12,11 +13,21 @@ use tracing::{debug, info};
 pub struct CachedDatabase {
     database: Database,
     cache: CacheService,
+    mint_coordinator: Option<MintCoordinator>,
 }
 
 impl CachedDatabase {
     pub fn new(database: Database, cache: CacheService) -> Self {
-        Self { database, cache }
+        Self {
+            database,
+            cache,
+            mint_coordinator: None,
+        }
+    }
+
+    /// Set the mint coordinator (called after services are initialized)
+    pub fn set_mint_coordinator(&mut self, coordinator: MintCoordinator) {
+        self.mint_coordinator = Some(coordinator);
     }
 
     /// Pre-fill the cache with all main data types on startup
@@ -904,5 +915,161 @@ impl CachedDatabase {
         params.nuts.hash(&mut hasher);
 
         format!("{:x}", hasher.finish())
+    }
+
+    /// Get mints with recommendations and info for frontend (using new unified approach)
+    pub async fn get_unified_mints_with_recommendations(
+        &self,
+        query_params: &MintQueryParams,
+    ) -> Result<Vec<UnifiedMintWithRecommendations>> {
+        // Create a hash of the query parameters for cache key
+        let query_hash = self.hash_query_params(query_params);
+        let cache_key = CacheKey::MintsByQuery(format!("unified_{}", query_hash));
+
+        // Try cache first
+        if let Some(cached_data) = self
+            .cache
+            .get::<Vec<UnifiedMintWithRecommendations>>(&cache_key)
+            .await
+        {
+            debug!(
+                target: "bitcoinmints_retyr::cached_database",
+                cache_key = %cache_key,
+                "🎯 Serving unified mints from cache"
+            );
+            return Ok(cached_data);
+        }
+
+        // Cache miss - use mint coordinator if available
+        if let Some(coordinator) = &self.mint_coordinator {
+            info!(
+                target: "bitcoinmints_retyr::cached_database",
+                cache_key = %cache_key,
+                "🔄 Fetching unified mints using coordinator"
+            );
+
+            let data = coordinator
+                .get_unified_mints_with_recommendations(query_params)
+                .await?;
+
+            // Cache the result (2 minutes TTL for query-specific data)
+            self.cache.set(&cache_key, data.clone(), 120).await;
+
+            return Ok(data);
+        }
+
+        // Fallback to old method if coordinator not available
+        info!(
+            target: "bitcoinmints_retyr::cached_database",
+            cache_key = %cache_key,
+            "🔄 Falling back to legacy enrichment method"
+        );
+
+        let legacy_data = self
+            .get_mints_with_recommendations_and_info(query_params)
+            .await?;
+
+        // Convert legacy data to unified format (basic conversion)
+        let unified_data = self.convert_legacy_to_unified(legacy_data);
+        self.cache.set(&cache_key, unified_data.clone(), 120).await;
+
+        Ok(unified_data)
+    }
+
+    /// Convert legacy MintWithRecommendationsAndInfo to unified format
+    fn convert_legacy_to_unified(
+        &self,
+        legacy_mints: Vec<MintWithRecommendationsAndInfo>,
+    ) -> Vec<UnifiedMintWithRecommendations> {
+        legacy_mints
+            .into_iter()
+            .map(|legacy| {
+                let mint_type = match legacy.mint.mint_type.as_str() {
+                    "cashu" => MintType::Cashu,
+                    "fedimint" => MintType::Fedimint,
+                    _ => MintType::Cashu, // Default fallback
+                };
+
+                let (cashu_data, fedimint_data) = match mint_type {
+                    MintType::Cashu => {
+                        let cashu_data = Some(CashuMintData {
+                            mint_url: legacy.mint.mint_url.clone(),
+                            mint_pubkey: legacy.mint.mint_pubkey.clone(),
+                            nuts: legacy.mint.nuts.clone(),
+                            mint_info: legacy.parsed_info.clone(),
+                            version: legacy.parsed_info.as_ref().and_then(|i| i.version.clone()),
+                            supported_currencies: Vec::new(), // Would need to extract from nuts
+                        });
+                        (cashu_data, None)
+                    }
+                    MintType::Fedimint => {
+                        let fedimint_data = Some(FedimintMintData {
+                            federation_id: legacy.mint.federation_id.clone().unwrap_or_default(),
+                            federation_name: legacy
+                                .mint
+                                .meta
+                                .get("federation_name")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            invite_codes: legacy.mint.invite_codes.clone(),
+                            modules: legacy.mint.modules.clone(),
+                            guardians_count: legacy.mint.guardians_count,
+                            welcome_message: legacy
+                                .mint
+                                .meta
+                                .get("welcome_message")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            config_available: legacy.mint.federation_id.is_some(),
+                        });
+                        (None, fedimint_data)
+                    }
+                };
+
+                let health_info = legacy.stored_info.as_ref().map(|stored| MintHealthInfo {
+                    health_score: stored.health_score,
+                    uptime_percentage: stored.health_score * 100.0,
+                    consecutive_failures: stored.consecutive_failures,
+                    consecutive_successes: stored.consecutive_successes,
+                    total_attempts: stored.total_attempts,
+                    total_successes: stored.total_successes,
+                    last_check: stored.last_fetched_at,
+                });
+
+                let unified_mint_data = UnifiedMintData {
+                    event_id: legacy.mint.event_id,
+                    mint_id: match mint_type {
+                        MintType::Cashu => legacy.mint.mint_url.clone(),
+                        MintType::Fedimint => legacy
+                            .mint
+                            .federation_id
+                            .unwrap_or_else(|| format!("unknown-{}", legacy.mint.mint_pubkey)),
+                    },
+                    name: legacy.mint.name,
+                    description: legacy.mint.description,
+                    mint_type,
+                    networks: legacy.mint.networks,
+                    author_pubkey: legacy.mint.author_pubkey,
+                    created_at: legacy.mint.created_at,
+                    received_at: legacy.mint.received_at,
+                    cashu_data,
+                    fedimint_data,
+                    health_info,
+                    is_online: legacy
+                        .stored_info
+                        .as_ref()
+                        .map(|s| s.is_currently_online)
+                        .unwrap_or(true),
+                    last_updated: legacy.stored_info.as_ref().map(|s| s.last_fetched_at),
+                };
+
+                UnifiedMintWithRecommendations {
+                    mint_data: unified_mint_data,
+                    recommendations: legacy.recommendations,
+                    total_recommendations: legacy.total_recommendations,
+                    average_rating: legacy.average_rating,
+                }
+            })
+            .collect()
     }
 }

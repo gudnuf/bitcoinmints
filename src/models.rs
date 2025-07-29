@@ -315,3 +315,99 @@ impl CacheStats {
         };
     }
 }
+
+/// Unified mint display data for UI consumption
+/// This provides a consistent interface regardless of mint type
+#[derive(Debug, Clone, Serialize)]
+pub struct UnifiedMintData {
+    pub event_id: String,
+    pub mint_id: String, // federation_id for fedimint, mint_url for cashu
+    pub name: String,
+    pub description: Option<String>,
+    pub mint_type: MintType,
+    pub networks: Vec<String>,
+    pub author_pubkey: String,
+    pub created_at: u64,
+    pub received_at: DateTime<Utc>,
+
+    // Type-specific data
+    pub cashu_data: Option<CashuMintData>,
+    pub fedimint_data: Option<FedimintMintData>,
+
+    // Enriched information
+    pub health_info: Option<MintHealthInfo>,
+    pub is_online: bool,
+    pub last_updated: Option<DateTime<Utc>>,
+}
+
+/// Cashu-specific mint data
+#[derive(Debug, Clone, Serialize)]
+pub struct CashuMintData {
+    pub mint_url: String,
+    pub mint_pubkey: String,
+    pub nuts: cdk::nuts::Nuts,
+    pub mint_info: Option<FlexibleMintInfo>,
+    pub version: Option<String>,
+    pub supported_currencies: Vec<String>,
+}
+
+/// Fedimint-specific mint data  
+#[derive(Debug, Clone, Serialize)]
+pub struct FedimintMintData {
+    pub federation_id: String,
+    pub federation_name: Option<String>,
+    pub invite_codes: Vec<String>,
+    pub modules: Vec<String>,
+    pub guardians_count: Option<usize>,
+    pub welcome_message: Option<String>,
+    pub config_available: bool,
+}
+
+/// Mint health information
+#[derive(Debug, Clone, Serialize)]
+pub struct MintHealthInfo {
+    pub health_score: f64,
+    pub uptime_percentage: f64,
+    pub consecutive_failures: i32,
+    pub consecutive_successes: i32,
+    pub total_attempts: i32,
+    pub total_successes: i32,
+    pub last_check: DateTime<Utc>,
+}
+
+/// Mint type enum for better type safety
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub enum MintType {
+    Cashu,
+    Fedimint,
+}
+
+impl std::fmt::Display for MintType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MintType::Cashu => write!(f, "cashu"),
+            MintType::Fedimint => write!(f, "fedimint"),
+        }
+    }
+}
+
+/// Unified mint with recommendations for UI display
+#[derive(Debug, Serialize, Clone)]
+pub struct UnifiedMintWithRecommendations {
+    pub mint_data: UnifiedMintData,
+    pub recommendations: Vec<RecommendationWithUser>,
+    pub total_recommendations: usize,
+    pub average_rating: Option<f64>,
+}
+
+/// Federation enrichment result
+#[derive(Debug, Clone)]
+pub struct FederationEnrichmentResult {
+    pub federation_id: String,
+    pub federation_name: Option<String>,
+    pub modules: Vec<String>,
+    pub guardians_count: usize,
+    pub invite_codes: Vec<String>,
+    pub meta: HashMap<String, serde_json::Value>,
+    pub config_available: bool,
+}

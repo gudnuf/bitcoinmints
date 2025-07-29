@@ -1,8 +1,9 @@
 use crate::cached_database::CachedDatabase;
 use crate::models::MintQueryParams;
 use crate::models::*;
+use crate::ui::pages::mints::render_unified_mints_page;
 use crate::ui::pages::review_detail::render_review_detail_page;
-use crate::ui::{render_mints_page, render_reviews_page};
+use crate::ui::render_reviews_page;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -14,14 +15,22 @@ use tracing::error;
 /// GET /api/mints - Get all mints with their recommendations (cached)
 pub async fn get_mints(
     State(cached_database): State<CachedDatabase>,
-) -> Result<Json<MintsResponse>, (StatusCode, String)> {
-    match cached_database.get_mints_with_recommendations(None).await {
-        Ok(mints) => Ok(Json(MintsResponse { mints })),
+    Query(params): Query<MintQueryParams>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    match cached_database
+        .get_unified_mints_with_recommendations(&params)
+        .await
+    {
+        Ok(unified_mints) => Ok(Json(serde_json::json!({
+            "mints": unified_mints,
+            "total_count": unified_mints.len(),
+            "success": true
+        }))),
         Err(e) => {
             error!(
                 target: "bitcoinmints_retyr::handlers",
                 error = %e,
-                "❌ Failed to get mints"
+                "❌ Failed to get unified mints"
             );
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -129,18 +138,18 @@ pub async fn mints_page(
     Query(params): Query<MintQueryParams>,
 ) -> Result<Html<String>, (StatusCode, String)> {
     match cached_database
-        .get_mints_with_recommendations_and_info(&params)
+        .get_unified_mints_with_recommendations(&params)
         .await
     {
-        Ok(mints) => {
-            let markup = render_mints_page(&mints, params.mint_type.as_deref());
+        Ok(unified_mints) => {
+            let markup = render_unified_mints_page(&unified_mints, params.mint_type.as_deref());
             Ok(Html(markup.into_string()))
         }
         Err(e) => {
             error!(
                 target: "bitcoinmints_retyr::handlers",
                 error = %e,
-                "❌ Failed to get mints for frontend"
+                "❌ Failed to get unified mints for frontend"
             );
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,

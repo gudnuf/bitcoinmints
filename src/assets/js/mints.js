@@ -1,15 +1,16 @@
 function toggleReviewers(element) {
-    const reviewersGrid = element.nextElementSibling;
+    const recommendationsContent = element.nextElementSibling;
     const expandIndicator = element.querySelector('.expand-indicator');
     
-    if (reviewersGrid.classList.contains('expanded')) {
-        reviewersGrid.classList.remove('expanded');
+    if (recommendationsContent.classList.contains('expanded')) {
+        recommendationsContent.classList.remove('expanded');
         expandIndicator.classList.remove('expanded');
     } else {
-        reviewersGrid.classList.add('expanded');
+        recommendationsContent.classList.add('expanded');
         expandIndicator.classList.add('expanded');
     }
 }
+
 
 function toggleMintInfo(element) {
     const infoContent = element.nextElementSibling;

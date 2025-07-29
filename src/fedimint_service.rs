@@ -28,6 +28,16 @@ pub struct FederationInfo {
     pub meta: HashMap<String, serde_json::Value>,
 }
 
+/// Federation error types for better error handling
+#[derive(Debug, Clone)]
+pub enum FederationErrorType {
+    NetworkError,       // Connection issues, DNS problems
+    InvalidInvite,      // Malformed invite code
+    ConfigurationError, // Federation configuration issues
+    Timeout,            // Request timeout
+    Unknown,            // Other errors
+}
+
 impl FedimintService {
     /// Create a new FedimintService
     pub async fn new(database: Database) -> Result<Self> {
@@ -89,7 +99,10 @@ impl FedimintService {
         let mut federation_infos: HashMap<FederationId, FederationInfo> = HashMap::new();
 
         for invite_code in invite_codes {
-            match self.fetch_federation_config(&invite_code).await {
+            match self
+                .fetch_federation_config_with_retry(&invite_code, 3)
+                .await
+            {
                 Ok(fed_info) => {
                     success_count += 1;
                     info!(
@@ -98,6 +111,16 @@ impl FedimintService {
                         federation_id = %fed_info.federation_id,
                         "✅ Successfully fetched federation config"
                     );
+
+                    // Store successful result immediately before moving fed_info
+                    if let Err(e) = self.store_federation_success(&invite_code, &fed_info).await {
+                        warn!(
+                            target: "bitcoinmints_retyr::fedimint",
+                            invite_code = %invite_code,
+                            error = %e,
+                            "⚠️ Failed to store successful federation config"
+                        );
+                    }
 
                     // Group by federation ID - multiple invite codes can point to same federation
                     if let Some(existing) = federation_infos.get_mut(&fed_info.federation_id) {
@@ -112,17 +135,68 @@ impl FedimintService {
                 }
                 Err(e) => {
                     error_count += 1;
-                    warn!(
-                        target: "bitcoinmints_retyr::fedimint",
-                        invite_code = %invite_code,
-                        error = %e,
-                        "⚠️ Failed to fetch federation config"
-                    );
+
+                    // Store the error in database for tracking
+                    if let Err(store_err) = self
+                        .store_federation_error(&invite_code, &e.to_string())
+                        .await
+                    {
+                        warn!(
+                            target: "bitcoinmints_retyr::fedimint",
+                            invite_code = %invite_code,
+                            store_error = %store_err,
+                            "⚠️ Failed to store federation error"
+                        );
+                    }
+
+                    // Categorize the error for better handling
+                    match self.categorize_federation_error(&e) {
+                        FederationErrorType::NetworkError => {
+                            warn!(
+                                target: "bitcoinmints_retyr::fedimint",
+                                invite_code = %invite_code,
+                                error = %e,
+                                "🌐 Network error fetching federation config (will retry later)"
+                            );
+                        }
+                        FederationErrorType::InvalidInvite => {
+                            warn!(
+                                target: "bitcoinmints_retyr::fedimint",
+                                invite_code = %invite_code,
+                                error = %e,
+                                "❌ Invalid invite code (permanent error)"
+                            );
+                        }
+                        FederationErrorType::ConfigurationError => {
+                            warn!(
+                                target: "bitcoinmints_retyr::fedimint",
+                                invite_code = %invite_code,
+                                error = %e,
+                                "⚙️  Federation configuration error"
+                            );
+                        }
+                        FederationErrorType::Timeout => {
+                            warn!(
+                                target: "bitcoinmints_retyr::fedimint",
+                                invite_code = %invite_code,
+                                error = %e,
+                                "⏰ Timeout fetching federation config (will retry later)"
+                            );
+                        }
+                        FederationErrorType::Unknown => {
+                            warn!(
+                                target: "bitcoinmints_retyr::fedimint",
+                                invite_code = %invite_code,
+                                error = %e,
+                                "❓ Unknown error fetching federation config"
+                            );
+                        }
+                    }
                 }
             }
 
             // Add a small delay between requests to be respectful
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(750)).await;
         }
 
         // Store the federation info in the database
@@ -145,6 +219,51 @@ impl FedimintService {
             "✨ Federation config fetch cycle completed"
         );
         Ok(())
+    }
+
+    /// Fetch federation config with retry logic
+    pub async fn fetch_federation_config_with_retry(
+        &self,
+        invite_code: &str,
+        max_retries: u32,
+    ) -> Result<FederationInfo> {
+        let mut last_error = None;
+
+        for attempt in 1..=max_retries {
+            match self.fetch_federation_config(invite_code).await {
+                Ok(config) => return Ok(config),
+                Err(e) => {
+                    last_error = Some(anyhow::anyhow!("{}", e));
+
+                    // Don't retry certain error types
+                    match self.categorize_federation_error(&e) {
+                        FederationErrorType::InvalidInvite => {
+                            info!(
+                                target: "bitcoinmints_retyr::fedimint",
+                                invite_code = %invite_code,
+                                "🚫 Not retrying invalid invite code"
+                            );
+                            return Err(e);
+                        }
+                        _ => {
+                            if attempt < max_retries {
+                                let delay = Duration::from_millis(1000 * attempt as u64);
+                                info!(
+                                    target: "bitcoinmints_retyr::fedimint",
+                                    invite_code = %invite_code,
+                                    attempt = attempt,
+                                    delay_ms = delay.as_millis(),
+                                    "🔄 Retrying federation config fetch"
+                                );
+                                tokio::time::sleep(delay).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Failed after {} retries", max_retries)))
     }
 
     /// Fetch federation config for a specific invite code
@@ -326,5 +445,89 @@ impl FedimintService {
         }
 
         Ok(None)
+    }
+
+    /// Categorize federation errors for better handling
+    fn categorize_federation_error(&self, error: &anyhow::Error) -> FederationErrorType {
+        let error_string = error.to_string().to_lowercase();
+
+        if error_string.contains("invalid invite")
+            || error_string.contains("parse")
+            || error_string.contains("malformed")
+        {
+            FederationErrorType::InvalidInvite
+        } else if error_string.contains("timeout") || error_string.contains("timed out") {
+            FederationErrorType::Timeout
+        } else if error_string.contains("connection")
+            || error_string.contains("network")
+            || error_string.contains("dns")
+            || error_string.contains("connect")
+        {
+            FederationErrorType::NetworkError
+        } else if error_string.contains("config")
+            || error_string.contains("guardian")
+            || error_string.contains("federation")
+        {
+            FederationErrorType::ConfigurationError
+        } else {
+            FederationErrorType::Unknown
+        }
+    }
+
+    /// Store successful federation config fetch
+    async fn store_federation_success(
+        &self,
+        invite_code: &str,
+        fed_info: &FederationInfo,
+    ) -> Result<()> {
+        let config_json = serde_json::to_string(&fed_info.config)
+            .context("Failed to serialize federation config")?;
+
+        let federation_name = fed_info
+            .meta
+            .get("federation_name")
+            .and_then(|v| v.as_str());
+        let welcome_message = fed_info
+            .meta
+            .get("welcome_message")
+            .and_then(|v| v.as_str());
+
+        self.database
+            .store_federation_info(
+                &fed_info.federation_id.to_string(),
+                &config_json,
+                fed_info.guardians_count,
+                &fed_info.modules,
+                federation_name,
+                welcome_message,
+                &fed_info.invite_codes,
+                None, // no error
+            )
+            .await
+            .context("Failed to store federation config")?;
+
+        Ok(())
+    }
+
+    /// Store federation config fetch error
+    async fn store_federation_error(&self, invite_code: &str, error_message: &str) -> Result<()> {
+        // Use a placeholder federation_id for error storage
+        let placeholder_federation_id = format!("error-{}", invite_code);
+
+        self.database
+            .store_federation_info(
+                &placeholder_federation_id,
+                "",          // empty config
+                0,           // no guardians
+                &Vec::new(), // no modules
+                None,        // no federation name
+                None,        // no welcome message
+                &vec![invite_code.to_string()],
+                Some(error_message), // store the error
+            )
+            .await
+            .context("Failed to store federation error")?;
+
+        Ok(())
     }
 }

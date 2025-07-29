@@ -1,4 +1,4 @@
-use crate::models::MintWithRecommendationsAndInfo;
+use crate::models::{MintType, MintWithRecommendationsAndInfo, UnifiedMintWithRecommendations};
 use maud::{html, Markup};
 use std::collections::HashMap;
 
@@ -1027,71 +1027,99 @@ pub fn get_mint_styles() -> &'static str {
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
-    .ratings-section {
+    .reviewer-rating {
+        color: var(--secondary-orange);
+        font-weight: 700;
+        font-size: 0.85rem;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+
+    .reviewer-rating.no-rating {
+        color: rgba(255, 255, 255, 0.5);
+        font-style: italic;
+        font-weight: 500;
+    }
+
+    .no-reviews {
+        color: var(--text-secondary);
+        font-style: italic;
+        text-align: center;
+        padding: 1rem;
+        font-weight: 500;
+    }
+
+    .recommendations-section {
         margin-bottom: 1.5rem;
     }
 
-    .ratings-summary {
+    .recommendations-header {
         display: flex;
         align-items: center;
-        gap: 1rem;
-        margin-bottom: 1rem;
+        justify-content: space-between;
+        cursor: pointer;
         padding: 1rem;
         background: rgba(255, 255, 255, 0.05);
         border-radius: 12px;
         backdrop-filter: blur(6px);
         -webkit-backdrop-filter: blur(6px);
         border: 1px solid rgba(255, 255, 255, 0.1);
-        flex-wrap: wrap;
+        transition: all 0.3s ease;
+        min-height: 44px;
     }
 
-    .rating-score {
-        font-size: 2rem;
-        font-weight: 800;
-        background: linear-gradient(135deg, var(--secondary-orange), var(--primary-orange));
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    .recommendations-header:hover {
+        background: rgba(255, 255, 255, 0.1);
     }
 
-    .rating-details {
-        color: var(--text-secondary);
+    .recommendations-summary {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        flex: 1;
+    }
+
+    .recommendations-info {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--text-primary);
         font-weight: 600;
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
-    .reviews-summary-container {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
-        cursor: pointer;
-        padding: 0.75rem;
-        border-radius: 12px;
-        transition: background 0.3s ease;
-        min-height: 44px;
+    .recommendations-icon {
+        font-size: 1.1rem;
     }
 
-    .reviews-summary-container:hover {
-        background: rgba(255, 255, 255, 0.1);
+    .recommendations-count {
+        font-size: 0.9rem;
+    }
+
+    .average-rating {
+        color: var(--secondary-orange);
+        font-size: 0.85rem;
+        font-weight: 700;
     }
 
     .reviewers-stack {
         display: flex;
         align-items: center;
         position: relative;
+        margin-left: 0.5rem;
     }
 
     .reviewer-bubble {
-        width: 36px;
-        height: 36px;
+        width: 32px;
+        height: 32px;
         border-radius: 50%;
-        border: 2px solid rgba(255, 255, 255, 0.2);
-        margin-left: -10px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        margin-left: -8px;
         transition: all 0.3s ease;
         position: relative;
         z-index: 1;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.1);
+        flex-shrink: 0;
     }
 
     .reviewer-bubble:first-child {
@@ -1099,10 +1127,10 @@ pub fn get_mint_styles() -> &'static str {
     }
 
     .reviewer-bubble:hover {
-        transform: translateY(-6px) scale(1.15);
+        transform: translateY(-4px) scale(1.1);
         z-index: 10;
         border-color: var(--primary-orange);
-        box-shadow: 0 8px 20px rgba(255, 107, 53, 0.4);
+        box-shadow: 0 6px 16px rgba(255, 107, 53, 0.4);
     }
 
     .reviewer-avatar {
@@ -1129,7 +1157,7 @@ pub fn get_mint_styles() -> &'static str {
     .more-reviewers {
         background: rgba(255, 255, 255, 0.25);
         color: white;
-        font-size: 11px;
+        font-size: 10px;
         font-weight: 700;
         display: flex;
         align-items: center;
@@ -1139,25 +1167,30 @@ pub fn get_mint_styles() -> &'static str {
 
     .expand-indicator {
         color: var(--primary-orange);
-        font-size: 1.4rem;
+        font-size: 1.2rem;
         transition: transform 0.3s ease;
         filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+        flex-shrink: 0;
     }
 
     .expand-indicator.expanded {
         transform: rotate(180deg);
     }
 
-    .reviewers-grid {
+    .recommendations-content {
         display: none;
-        flex-wrap: wrap;
-        gap: 0.75rem;
         margin-top: 1rem;
         animation: slideDown 0.3s ease;
     }
 
-    .reviewers-grid.expanded {
-        display: flex;
+    .recommendations-content.expanded {
+        display: block;
+    }
+
+    .reviewers-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 0.75rem;
     }
 
     @keyframes slideDown {
@@ -1372,6 +1405,44 @@ pub fn get_mint_styles() -> &'static str {
             padding: 0.75rem 1rem;
             font-size: 0.8rem;
         }
+
+        .recommendations-header {
+            padding: 0.75rem;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.75rem;
+        }
+
+        .recommendations-summary {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.5rem;
+        }
+
+        .recommendations-info {
+            justify-content: center;
+        }
+
+        .reviewers-stack {
+            justify-content: center;
+            margin-left: 0;
+        }
+
+        .reviewer-bubble {
+            width: 28px;
+            height: 28px;
+            margin-left: -6px;
+        }
+
+        .expand-indicator {
+            align-self: center;
+            font-size: 1rem;
+        }
+
+        .reviewers-grid {
+            grid-template-columns: 1fr;
+            gap: 0.5rem;
+        }
     }
 
     @media (min-width: 481px) and (max-width: 768px) {
@@ -1390,6 +1461,14 @@ pub fn get_mint_styles() -> &'static str {
         .mint-header {
             flex-wrap: wrap;
             gap: 1rem;
+        }
+
+        .reviewers-grid {
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        }
+
+        .recommendations-header {
+            padding: 0.875rem;
         }
     }
 
@@ -1752,17 +1831,410 @@ pub fn get_supported_nuts(nuts: &cdk::nuts::Nuts) -> Vec<String> {
         supported.push("20".to_string());
     }
 
-    #[cfg(feature = "auth")]
-    {
-        if nuts.nut21.is_some() {
-            supported.push("21".to_string());
-        }
-        if nuts.nut22.is_some() {
-            supported.push("22".to_string());
-        }
-    }
+    // NUT 21 and 22 are not commonly implemented yet, commenting out
+    // #[cfg(feature = "auth")]
+    // {
+    //     if nuts.nut21.is_some() {
+    //         supported.push("21".to_string());
+    //     }
+    //     if nuts.nut22.is_some() {
+    //         supported.push("22".to_string());
+    //     }
+    // }
 
     supported
+}
+
+/// Render a unified mint card with proper type separation
+pub fn render_unified_mint_card(unified_mint: &UnifiedMintWithRecommendations) -> Markup {
+    let mint_data = &unified_mint.mint_data;
+
+    html! {
+        div class="mint-card" {
+            div class="mint-header" {
+                div class="mint-title-section" {
+                    div class="mint-name" { (mint_data.name) }
+
+                    // Display appropriate URL/identifier based on mint type
+                    div class="mint-url" {
+                        @match mint_data.mint_type {
+                            MintType::Cashu => {
+                                @if let Some(cashu_data) = &mint_data.cashu_data {
+                                    a href=(cashu_data.mint_url) target="_blank" {
+                                        (cashu_data.mint_url)
+                                    }
+                                } @else {
+                                    span { (mint_data.mint_id) }
+                                }
+                            }
+                            MintType::Fedimint => {
+                                @if let Some(fedimint_data) = &mint_data.fedimint_data {
+                                    @if !fedimint_data.invite_codes.is_empty() {
+                                        div class="federation-invites" {
+                                            span class="invite-label" { "Invite codes: " }
+                                            @for (i, invite_code) in fedimint_data.invite_codes.iter().take(2).enumerate() {
+                                                @if i > 0 { ", " }
+                                                span class="invite-code" {
+                                                    (format!("{}...{}",
+                                                        &invite_code[0..12.min(invite_code.len())],
+                                                        &invite_code[invite_code.len().saturating_sub(8)..]
+                                                    ))
+                                                }
+                                            }
+                                            @if fedimint_data.invite_codes.len() > 2 {
+                                                span { " +" (fedimint_data.invite_codes.len() - 2) " more" }
+                                            }
+                                        }
+                                    } @else {
+                                        span { "Federation ID: " (mint_data.mint_id) }
+                                    }
+                                } @else {
+                                    span { "Federation ID: " (mint_data.mint_id) }
+                                }
+                            }
+                        }
+                    }
+
+                    // Health status indicator
+                    div class="health-status" {
+                        @if mint_data.is_online {
+                            div class="health-indicator health-online" {
+                                span class="health-dot" {}
+                                span { "Online" }
+                            }
+                        } @else {
+                            div class="health-indicator health-offline" {
+                                span class="health-dot" {}
+                                span { "Offline" }
+                            }
+                        }
+
+                        // Uptime percentage for Cashu mints
+                        @if let Some(health_info) = &mint_data.health_info {
+                            @let uptime_percent = (health_info.uptime_percentage) as i32;
+                            div style="flex: 1; min-width: 120px;" {
+                                div style="font-size: 0.7rem; color: rgba(255, 255, 255, 0.7); margin-bottom: 0.25rem;" {
+                                    "Uptime: " (uptime_percent) "%"
+                                }
+                                div class="uptime-bar" {
+                                    @let uptime_class = if uptime_percent >= 95 { "uptime-excellent" } else if uptime_percent >= 80 { "uptime-good" } else { "uptime-poor" };
+                                    div class=(format!("uptime-fill {}", uptime_class)) style=(format!("width: {}%", uptime_percent)) {}
+                                }
+                            }
+                        } @else if mint_data.mint_type == MintType::Fedimint {
+                            @if let Some(fedimint_data) = &mint_data.fedimint_data {
+                                div style="flex: 1; min-width: 120px;" {
+                                    div style="font-size: 0.7rem; color: rgba(255, 255, 255, 0.7);" {
+                                        @if fedimint_data.config_available {
+                                            "✅ Config Available"
+                                        } @else {
+                                            "❌ Config Unavailable"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                div class="mint-type" { (mint_data.mint_type) }
+            }
+
+            @if let Some(description) = &mint_data.description {
+                div class="mint-description" { (description) }
+            }
+
+            // Display mint info section based on type
+            @match mint_data.mint_type {
+                MintType::Cashu => {
+                    @if let Some(cashu_data) = &mint_data.cashu_data {
+                        (render_cashu_info_section(cashu_data, &mint_data.health_info))
+                    }
+                }
+                MintType::Fedimint => {
+                    @if let Some(fedimint_data) = &mint_data.fedimint_data {
+                        (render_fedimint_info_section(fedimint_data))
+                    }
+                }
+            }
+
+            // Recommendations section (same for both types)
+            @if unified_mint.total_recommendations > 0 {
+                div class="recommendations-section" {
+                    div class="recommendations-header" onclick="toggleReviewers(this)" {
+                        div class="recommendations-summary" {
+                            div class="recommendations-info" {
+                                span class="recommendations-icon" { "💬" }
+                                span class="recommendations-count" { (unified_mint.total_recommendations) " Reviews" }
+                                @if let Some(avg_rating) = unified_mint.average_rating {
+                                    span class="average-rating" { "(" (format!("{:.1}", avg_rating)) "⭐)" }
+                                }
+                            }
+
+                            div class="reviewers-stack" {
+                                @let max_visible = 4;
+                                @let total_reviewers = unified_mint.recommendations.len();
+
+                                @for (index, rec_with_user) in unified_mint.recommendations.iter().take(max_visible).enumerate() {
+                                    div class="reviewer-bubble" style=(format!("z-index: {}", max_visible - index)) {
+                                        @if let Some(user_profile) = &rec_with_user.user_profile {
+                                            @if let Some(picture) = &user_profile.picture {
+                                                img class="reviewer-avatar" src=(picture) alt="Avatar";
+                                            } @else {
+                                                div class="no-avatar" {
+                                                    @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
+                                                        (name.chars().next().unwrap_or('?').to_uppercase())
+                                                    } @else {
+                                                        "?"
+                                                    }
+                                                }
+                                            }
+                                        } @else {
+                                            div class="no-avatar" { "?" }
+                                        }
+                                    }
+                                }
+
+                                @if total_reviewers > max_visible {
+                                    div class="reviewer-bubble more-reviewers" {
+                                        "+" (total_reviewers - max_visible)
+                                    }
+                                }
+                            }
+                        }
+
+                        span class="expand-indicator" { "▼" }
+                    }
+
+                    // Expanded reviewers grid (hidden by default)
+                    div class="recommendations-content" {
+                        div class="reviewers-grid" {
+                            @for rec_with_user in &unified_mint.recommendations {
+                                a href=(format!("/review/{}", rec_with_user.recommendation.event_id)) class="reviewer-card-link" {
+                                    div class="reviewer-card" {
+                                        @if let Some(user_profile) = &rec_with_user.user_profile {
+                                            @if let Some(picture) = &user_profile.picture {
+                                                img class="reviewer-avatar" src=(picture) alt="Avatar";
+                                            } @else {
+                                                div class="no-avatar" {
+                                                    @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
+                                                        (name.chars().next().unwrap_or('?').to_uppercase())
+                                                    } @else {
+                                                        "?"
+                                                    }
+                                                }
+                                            }
+
+                                            div class="reviewer-name" {
+                                                @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
+                                                    (name)
+                                                } @else {
+                                                    (format!("{}...{}",
+                                                        &user_profile.pubkey[0..8],
+                                                        &user_profile.pubkey[user_profile.pubkey.len()-8..]
+                                                    ))
+                                                }
+                                            }
+                                        } @else {
+                                            div class="no-avatar" { "?" }
+                                            div class="reviewer-name" {
+                                                (format!("{}...{}",
+                                                    &rec_with_user.recommendation.reviewer_pubkey[0..8],
+                                                    &rec_with_user.recommendation.reviewer_pubkey[rec_with_user.recommendation.reviewer_pubkey.len()-8..]
+                                                ))
+                                            }
+                                        }
+
+                                        @if let Some(rating) = rec_with_user.recommendation.rating {
+                                            div class="reviewer-rating" { (rating) "⭐" }
+                                        } @else {
+                                            div class="reviewer-rating no-rating" { "No rating" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Render Cashu-specific info section
+fn render_cashu_info_section(
+    cashu_data: &crate::models::CashuMintData,
+    health_info: &Option<crate::models::MintHealthInfo>,
+) -> Markup {
+    html! {
+        div class="info-section" {
+            div class="info-header" onclick="toggleMintInfo(this)" {
+                div class="info-header-left" {
+                    span { "🏦" }
+                    span { "Cashu Mint Information" }
+                }
+                span class="info-expand-indicator" { "▼" }
+            }
+
+            div class="info-content" {
+                @if let Some(mint_info) = &cashu_data.mint_info {
+                    div class="info-grid" {
+                        @if let Some(version) = &mint_info.version {
+                            div class="info-item" {
+                                div class="info-label" { "Version" }
+                                div class="info-value" { (version) }
+                            }
+                        }
+
+                        @if let Some(pubkey) = &mint_info.pubkey {
+                            div class="info-item" {
+                                div class="info-label" { "Public Key" }
+                                div class="info-value" {
+                                    (format!("{}...{}",
+                                        &pubkey[0..16.min(pubkey.len())],
+                                        &pubkey[pubkey.len().saturating_sub(16)..]
+                                    ))
+                                }
+                            }
+                        }
+
+                        @if let Some(motd) = &mint_info.motd {
+                            div class="info-item" {
+                                div class="info-label" { "Message of the Day" }
+                                div class="info-value" { (motd) }
+                            }
+                        }
+
+                        @if let Some(health) = health_info {
+                            div class="info-item" {
+                                div class="info-label" { "Health Status" }
+                                div class="info-value" {
+                                    (format!("{:.1}%", health.uptime_percentage)) " uptime • "
+                                    (health.total_successes) "/" (health.total_attempts) " successful checks"
+                                }
+                            }
+                        }
+
+                        // Display supported NUTs
+                        @let supported_nuts = get_supported_nuts(&cashu_data.nuts);
+                        @if !supported_nuts.is_empty() {
+                            div class="info-item" style="grid-column: 1 / -1;" {
+                                div class="info-label" { "Supported NUTs (Protocols)" }
+                                div class="nuts-container" {
+                                    @for nut in supported_nuts {
+                                        @let padded_nut = if nut.len() == 1 { format!("0{}", nut) } else { nut.clone() };
+                                        @let spec_url = format!("https://github.com/cashubtc/nuts/blob/main/{}.md", padded_nut);
+                                        a href=(spec_url) target="_blank" class="nut-badge" { "NUT-" (nut) }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Display supported currencies
+                        @if !cashu_data.supported_currencies.is_empty() {
+                            div class="info-item" style="grid-column: 1 / -1;" {
+                                div class="info-label" { "Supported Currencies" }
+                                div class="nuts-container" {
+                                    @for currency in &cashu_data.supported_currencies {
+                                        span class="currency-badge" { (currency.to_uppercase()) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } @else {
+                    div class="no-info" { "Mint info not available" }
+                }
+            }
+        }
+    }
+}
+
+/// Render Fedimint-specific info section  
+fn render_fedimint_info_section(fedimint_data: &crate::models::FedimintMintData) -> Markup {
+    html! {
+        div class="info-section" {
+            div class="info-header" onclick="toggleMintInfo(this)" {
+                div class="info-header-left" {
+                    span { "🔵" }
+                    span { "Fedimint Federation Information" }
+                }
+                span class="info-expand-indicator" { "▼" }
+            }
+
+            div class="info-content" {
+                div class="info-grid" {
+                    div class="info-item" {
+                        div class="info-label" { "Federation ID" }
+                        div class="info-value" {
+                            (format!("{}...{}",
+                                &fedimint_data.federation_id[0..16.min(fedimint_data.federation_id.len())],
+                                &fedimint_data.federation_id[fedimint_data.federation_id.len().saturating_sub(16)..]
+                            ))
+                        }
+                    }
+
+                    @if let Some(federation_name) = &fedimint_data.federation_name {
+                        div class="info-item" {
+                            div class="info-label" { "Federation Name" }
+                            div class="info-value" { (federation_name) }
+                        }
+                    }
+
+                    @if let Some(guardians_count) = fedimint_data.guardians_count {
+                        div class="info-item" {
+                            div class="info-label" { "Guardians" }
+                            div class="info-value" { (guardians_count) " guardians" }
+                        }
+                    }
+
+                    div class="info-item" {
+                        div class="info-label" { "Configuration" }
+                        div class="info-value" {
+                            @if fedimint_data.config_available {
+                                span style="color: #10B981;" { "✅ Available" }
+                            } @else {
+                                span style="color: #EF4444;" { "❌ Unavailable" }
+                            }
+                        }
+                    }
+
+                    @if !fedimint_data.modules.is_empty() {
+                        div class="info-item" style="grid-column: 1 / -1;" {
+                            div class="info-label" { "Supported Modules" }
+                            div class="nuts-container" {
+                                @for module in &fedimint_data.modules {
+                                    span class="module-badge" { "Module " (module) }
+                                }
+                            }
+                        }
+                    }
+
+                    @if !fedimint_data.invite_codes.is_empty() {
+                        div class="info-item" style="grid-column: 1 / -1;" {
+                            div class="info-label" { "Federation Invite Codes" }
+                            div class="nuts-container" {
+                                @for invite_code in &fedimint_data.invite_codes {
+                                    span class="module-badge" style="font-family: monospace; font-size: 0.8rem;" {
+                                        (format!("{}...{}",
+                                            &invite_code[0..12.min(invite_code.len())],
+                                            &invite_code[invite_code.len().saturating_sub(12)..]
+                                        ))
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    @if let Some(welcome_message) = &fedimint_data.welcome_message {
+                        div class="info-item" style="grid-column: 1 / -1;" {
+                            div class="info-label" { "Welcome Message" }
+                            div class="info-value" { (welcome_message) }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Render a single mint card
@@ -2074,48 +2546,45 @@ pub fn render_mint_card(mint_with_recs: &MintWithRecommendationsAndInfo) -> Mark
             }
 
             @if mint_with_recs.total_recommendations > 0 {
-                div class="ratings-section" {
-                    div class="ratings-summary" {
-                        @if let Some(avg_rating) = mint_with_recs.average_rating {
-                            div class="rating-score" {
-                                "⭐ " (format!("{:.1}", avg_rating))
-                            }
-                        }
-                        div class="rating-details" {
-                            (mint_with_recs.total_recommendations) " review"
-                            @if mint_with_recs.total_recommendations != 1 { "s" }
-                        }
-                    }
-
-                    // Collapsible reviews summary
-                    div class="reviews-summary-container" onclick="toggleReviewers(this)" {
-                        div class="reviewers-stack" {
-                            @let max_visible = 5;
-                            @let total_reviewers = mint_with_recs.recommendations.len();
-
-                            @for (index, rec_with_user) in mint_with_recs.recommendations.iter().take(max_visible).enumerate() {
-                                div class="reviewer-bubble" style=(format!("z-index: {}", max_visible - index)) {
-                                    @if let Some(user_profile) = &rec_with_user.user_profile {
-                                        @if let Some(picture) = &user_profile.picture {
-                                            img class="reviewer-avatar" src=(picture) alt="Avatar";
-                                        } @else {
-                                            div class="no-avatar" {
-                                                @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
-                                                    (name.chars().next().unwrap_or('?').to_uppercase())
-                                                } @else {
-                                                    "?"
-                                                }
-                                            }
-                                        }
-                                    } @else {
-                                        div class="no-avatar" { "?" }
-                                    }
+                div class="recommendations-section" {
+                    div class="recommendations-header" onclick="toggleReviewers(this)" {
+                        div class="recommendations-summary" {
+                            div class="recommendations-info" {
+                                span class="recommendations-icon" { "💬" }
+                                span class="recommendations-count" { (mint_with_recs.total_recommendations) " Reviews" }
+                                @if let Some(avg_rating) = mint_with_recs.average_rating {
+                                    span class="average-rating" { "(" (format!("{:.1}", avg_rating)) "⭐)" }
                                 }
                             }
 
-                            @if total_reviewers > max_visible {
-                                div class="reviewer-bubble more-reviewers" {
-                                    "+" (total_reviewers - max_visible)
+                            div class="reviewers-stack" {
+                                @let max_visible = 4;
+                                @let total_reviewers = mint_with_recs.recommendations.len();
+
+                                @for (index, rec_with_user) in mint_with_recs.recommendations.iter().take(max_visible).enumerate() {
+                                    div class="reviewer-bubble" style=(format!("z-index: {}", max_visible - index)) {
+                                        @if let Some(user_profile) = &rec_with_user.user_profile {
+                                            @if let Some(picture) = &user_profile.picture {
+                                                img class="reviewer-avatar" src=(picture) alt="Avatar";
+                                            } @else {
+                                                div class="no-avatar" {
+                                                    @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
+                                                        (name.chars().next().unwrap_or('?').to_uppercase())
+                                                    } @else {
+                                                        "?"
+                                                    }
+                                                }
+                                            }
+                                        } @else {
+                                            div class="no-avatar" { "?" }
+                                        }
+                                    }
+                                }
+
+                                @if total_reviewers > max_visible {
+                                    div class="reviewer-bubble more-reviewers" {
+                                        "+" (total_reviewers - max_visible)
+                                    }
                                 }
                             }
                         }
@@ -2124,46 +2593,48 @@ pub fn render_mint_card(mint_with_recs: &MintWithRecommendationsAndInfo) -> Mark
                     }
 
                     // Expanded reviewers grid (hidden by default)
-                    div class="reviewers-grid" {
-                        @for rec_with_user in &mint_with_recs.recommendations {
-                            a href=(format!("/review/{}", rec_with_user.recommendation.event_id)) class="reviewer-card-link" {
-                                div class="reviewer-card" {
-                                    @if let Some(user_profile) = &rec_with_user.user_profile {
-                                        @if let Some(picture) = &user_profile.picture {
-                                            img class="reviewer-avatar" src=(picture) alt="Avatar";
-                                        } @else {
-                                            div class="no-avatar" {
-                                                @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
-                                                    (name.chars().next().unwrap_or('?').to_uppercase())
-                                                } @else {
-                                                    "?"
+                    div class="recommendations-content" {
+                        div class="reviewers-grid" {
+                            @for rec_with_user in &mint_with_recs.recommendations {
+                                a href=(format!("/review/{}", rec_with_user.recommendation.event_id)) class="reviewer-card-link" {
+                                    div class="reviewer-card" {
+                                        @if let Some(user_profile) = &rec_with_user.user_profile {
+                                            @if let Some(picture) = &user_profile.picture {
+                                                img class="reviewer-avatar" src=(picture) alt="Avatar";
+                                            } @else {
+                                                div class="no-avatar" {
+                                                    @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
+                                                        (name.chars().next().unwrap_or('?').to_uppercase())
+                                                    } @else {
+                                                        "?"
+                                                    }
                                                 }
                                             }
-                                        }
-                                        div class="reviewer-name" {
-                                            @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
-                                                (name)
-                                            } @else {
+
+                                            div class="reviewer-name" {
+                                                @if let Some(name) = &user_profile.display_name.as_ref().or(user_profile.name.as_ref()) {
+                                                    (name)
+                                                } @else {
+                                                    (format!("{}...{}",
+                                                        &user_profile.pubkey[0..8],
+                                                        &user_profile.pubkey[user_profile.pubkey.len()-8..]
+                                                    ))
+                                                }
+                                            }
+                                        } @else {
+                                            div class="no-avatar" { "?" }
+                                            div class="reviewer-name" {
                                                 (format!("{}...{}",
-                                                    &user_profile.pubkey[0..8],
-                                                    &user_profile.pubkey[user_profile.pubkey.len()-8..]
+                                                    &rec_with_user.recommendation.reviewer_pubkey[0..8],
+                                                    &rec_with_user.recommendation.reviewer_pubkey[rec_with_user.recommendation.reviewer_pubkey.len()-8..]
                                                 ))
                                             }
                                         }
-                                    } @else {
-                                        div class="no-avatar" { "?" }
-                                        div class="reviewer-name" {
-                                            (format!("{}...{}",
-                                                &rec_with_user.recommendation.reviewer_pubkey[0..8],
-                                                &rec_with_user.recommendation.reviewer_pubkey[rec_with_user.recommendation.reviewer_pubkey.len()-8..]
-                                            ))
-                                        }
-                                    }
-                                    div class="reviewer-rating" {
+
                                         @if let Some(rating) = rec_with_user.recommendation.rating {
-                                            (rating)
+                                            div class="reviewer-rating" { (rating) "⭐" }
                                         } @else {
-                                            span style="color: rgba(255, 255, 255, 0.5); font-style: italic;" { "No rating" }
+                                            div class="reviewer-rating no-rating" { "No rating" }
                                         }
                                     }
                                 }
@@ -2172,8 +2643,8 @@ pub fn render_mint_card(mint_with_recs: &MintWithRecommendationsAndInfo) -> Mark
                     }
                 }
             } @else {
-                div class="ratings-section" {
-                    p style="color: #6c757d; font-style: italic;" { "No reviews yet" }
+                div class="recommendations-section" {
+                    div class="no-reviews" { "No reviews yet" }
                 }
             }
         }
